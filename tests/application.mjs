@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from '../server/index.mjs';
-import {openDatabase} from '../server/database.mjs';
+import {openDatabase,openTemporaryDemoDatabase} from '../server/database.mjs';
 import {launchBrowser,wait} from './browser-tools.mjs';
 
 const artifacts=await fs.mkdtemp(join(tmpdir(),'chog-app-')),checks=[],errors=[];
@@ -15,6 +15,12 @@ async function readyPage(){const p=await browser.newPage();p.handlers.push(d=>{i
 async function reload(p){await p.js(`window.__beforeTestReload=true`);await p.call('Page.reload');await p.until(`!window.__beforeTestReload && document.documentElement?.dataset.entrance==='done'`);await p.js(`document.fonts.ready.then(()=>true)`);}
 async function register(p,name){await open(p,'account');await input(p,'[name="username"]',name);await input(p,'[name="password"]','browser-test-password-123');await p.js(`document.querySelector('[value="register"]').click()`);await p.until(`!!document.querySelector('#shared-case-list')`);}
 async function screenshot(p,name){const r=await p.call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await fs.writeFile(join(artifacts,name+'.png'),Buffer.from(r.data,'base64'));}
+// Resizing queues fit() in requestAnimationFrame. A fixed delay can still inspect
+// the previous scale in background contexts; wait for the actual layout inputs.
+async function resize(p,width,height) {
+ await p.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<500});
+ await p.until(`(()=>{const h=document.documentElement,c=getComputedStyle(h),w=h.clientWidth,v=innerHeight,s=w/v>1280/800?v/800:w/1280;return innerWidth===${width}&&innerHeight===${height}&&h.classList.contains(c.getPropertyValue('--mode').trim())&&Math.abs(Number(h.style.getPropertyValue('--s'))-s)<1e-7})()`);
+}
 // CDP Enter needs its text payload to generate keypress/native button activation.
 async function key(p,key,code=key,windowsVirtualKeyCode=key==='Enter'?13:27){await p.call('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode,...(key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})});await p.call('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode});}
 async function decodeImages(p,selector){
@@ -71,9 +77,41 @@ try {
   await juror.call('Page.navigate',{url:base+'/#case/'+caseId});await juror.until(`!!document.querySelector('[data-live-verdict]')`);await reload(juror);await juror.until(`!!document.querySelector('[data-live-verdict]')`);assert.equal(await juror.js(`document.querySelector('.verdict-stamp').textContent`),'INNOCENT');
   const fresh=await readyPage();await open(fresh,'account');await input(fresh,'[name="username"]','juror_browser');await input(fresh,'[name="password"]','browser-test-password-123');await fresh.js(`document.querySelector('[value="login"]').click()`);await fresh.until(`!!document.querySelector('#shared-case-list')`);await open(fresh,'reputation');assert.equal(await fresh.js(`document.querySelector('.stat strong').textContent`),'1');
  });
+ let dailyId,nextDailyId;
+ await check('Daily question submission is shared, escaped, immutable and queues the next question',async()=>{
+  await open(plaintiff,'daily');await plaintiff.js(`document.querySelector('#daily-submit-panel').open=true`);
+  await input(plaintiff,'[name="question"]','Should <img src=x onerror=alert(1)> wear a tiny wig?');await input(plaintiff,'[name="choice1"]','Purple wig');await input(plaintiff,'[name="choice2"]','Golden crown');
+  await plaintiff.js(`document.querySelector('[data-api-form="daily-submit"]').requestSubmit()`);await plaintiff.until(`!!document.querySelector('#daily-current [data-daily-trial]')`);
+  dailyId=await plaintiff.js(`document.querySelector('#daily-current [data-daily-trial]').dataset.dailyTrial`);
+  assert.equal(await plaintiff.js(`document.querySelector('#daily-current h3 img')`),null);assert.equal(await plaintiff.js(`!!document.querySelector('[data-api-form="daily-vote"]')`),false);
+  await plaintiff.js(`document.querySelector('#daily-submit-panel').open=true`);await input(plaintiff,'[name="question"]','Which Chog snack should the next courtroom serve?');await input(plaintiff,'[name="choice1"]','Tiny purple cupcakes');await input(plaintiff,'[name="choice2"]','Golden popcorn');
+  await plaintiff.js(`document.querySelector('[data-api-form="daily-submit"]').requestSubmit()`);await plaintiff.until(`!document.querySelector('[data-api-form="daily-submit"]') && document.querySelector('#dialog-body').textContent.includes('Your question is waiting')`);
+  nextDailyId=await plaintiff.js(`(async()=>{const r=await fetch('/api/daily');return (await r.json()).next.id})()`);
+  await open(defendant,'daily');assert.equal(await defendant.js(`document.querySelector('#daily-current [data-daily-trial]').dataset.dailyTrial`),dailyId);assert.equal(await defendant.js(`!!document.querySelector('#daily-current [data-daily-result]')`),false);
+ });
+ await check('Separate daily voters use keyboard controls; duplicate votes fail and jury scores stay unchanged',async()=>{
+  for(const p of [defendant,juror]){
+   await open(p,'daily');await p.js(`document.querySelector('[name="choice"][value="0"]').focus()`);await key(p,' ','Space',32);
+   assert.equal(await p.js(`document.querySelector('[name="choice"][value="0"]').checked`),true);
+   await p.js(`document.querySelector('[data-api-form="daily-vote"] button').focus()`);await key(p,'Enter');await p.until(`!!document.querySelector('#daily-current [data-daily-recorded]')`);
+   assert.equal(await p.js(`!!document.querySelector('[data-api-form="daily-vote"]')`),false);
+   assert.equal(await p.js(`(async()=>{const a=await(await fetch('/api/auth/me')).json();const r=await fetch('/api/daily/${dailyId}/votes',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':a.csrf},body:JSON.stringify({choice:1})});return r.status})()`),409);
+  }
+  const p=await readyPage();await register(p,'daily_voter');await open(p,'daily');await p.js(`document.querySelector('[name="choice"][value="1"]').click();document.querySelector('[data-api-form="daily-vote"]').requestSubmit()`);await p.until(`!!document.querySelector('#daily-current [data-daily-recorded]')`);
+  await open(juror,'reputation');assert.equal(await juror.js(`document.querySelector('.stat strong').textContent`),'1');assert.ok((await juror.js(`document.querySelector('#dialog-body').textContent`)).includes('Daily Docket history'));
+  await open(plaintiff,'daily');assert.equal(await plaintiff.js(`!!document.querySelector('#daily-current [data-daily-result]')`),false);
+ });
+ await check('Daily deadline reveals the actual result, opens the next question and survives reload',async()=>{
+  const before=await(await fetch(base+'/api/daily')).json();time=Date.parse(before.current.closes_at);
+  await plaintiff.js(`document.querySelector('[data-daily-refresh]').click()`);await plaintiff.until(`document.querySelector('#daily-current [data-daily-trial]')?.dataset.dailyTrial===${JSON.stringify(nextDailyId)}`);
+  assert.ok((await plaintiff.js(`document.querySelector('#daily-results [data-daily-result]').textContent`)).includes('Winner: Purple wig'));assert.ok((await plaintiff.js(`document.querySelector('#daily-results').textContent`)).includes('66.7%'));
+  assert.equal(await plaintiff.js(`!!document.querySelector('#daily-current [data-daily-result]')`),false);
+  await juror.call('Page.navigate',{url:base+'/#daily'});await juror.until(`!!document.querySelector('#daily-results [data-daily-recorded]')`);await reload(juror);await juror.until(`!!document.querySelector('#daily-results [data-daily-recorded]')`);
+  assert.ok((await juror.js(`document.querySelector('#daily-results [data-daily-recorded]').textContent`)).includes('Purple wig'));await screenshot(juror,'daily-result-and-next');
+ });
  await check('Seven requested responsive layouts scroll to every section, contain all art, and keep modal controls reachable',async()=>{
   for(const [w,h]of [[1440,900],[1280,800],[768,1024],[1024,768],[390,844],[360,800],[844,390]]){
-   await plaintiff.call('Emulation.setDeviceMetricsOverride',{width:w,height:h,deviceScaleFactor:1,mobile:w<500});await plaintiff.js(`document.querySelector('dialog').close();window.scrollTo(0,0)`);await wait(80);
+   await resize(plaintiff,w,h);await plaintiff.js(`document.querySelector('dialog').close();window.scrollTo(0,0)`);
    assert.equal(await plaintiff.js(`document.documentElement.scrollWidth<=innerWidth`),true,`${w} horizontal overflow`);
    for(const section of ['courtroom','court-gallery','court-guide']){await plaintiff.js(`document.querySelector('.section-links a[href="#${section}"]').click()`);await wait(50);assert.equal(await plaintiff.js(`(()=>{const r=document.querySelector(${JSON.stringify('#'+section)}).getBoundingClientRect();return r.top<innerHeight&&r.bottom>0})()`),true);}
    await plaintiff.js(`document.querySelector('#court-gallery').scrollIntoView()`);await decodeImages(plaintiff,'.page-gallery img');
@@ -102,7 +140,7 @@ try {
    assert.equal(await p.js(`getComputedStyle(document.querySelector('.theme-toggle')).outlineStyle`),'solid');
    await reload(p);assert.equal(await p.js(`document.documentElement.dataset.theme`),theme);
    for(const [w,h]of [[1440,900],[1280,800],[1024,768],[768,1024],[390,844],[360,800],[844,390]]){
-    await p.call('Emulation.setDeviceMetricsOverride',{width:w,height:h,deviceScaleFactor:1,mobile:w<500});await p.js(`document.querySelector('dialog').close();window.scrollTo(0,0)`);await wait(80);
+    await resize(p,w,h);await p.js(`document.querySelector('dialog').close();window.scrollTo(0,0)`);
     assert.equal(await p.js(`document.documentElement.scrollWidth<=innerWidth`),true,`${theme} ${w} overflow`);
     assert.equal(await p.js(`(()=>{const a=document.querySelector('h1').getBoundingClientRect(),b=document.querySelector('.hero-copy').getBoundingClientRect();return a.bottom<=b.top||a.right<=b.left||a.left>=b.right})()`),true,`${theme} ${w} headline overlap`);
     assert.equal(await p.js(`[...document.querySelectorAll('.hdr .main-row > *, .mainnav > *')].filter(e=>e.getClientRects().length).every(e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.bottom<=document.querySelector('.hdr').getBoundingClientRect().bottom+1})`),true,`${theme} ${w} header controls: `+await p.js(`JSON.stringify({header:document.querySelector('.hdr').getBoundingClientRect(),controls:[...document.querySelectorAll('.hdr .main-row > *, .mainnav > *')].filter(e=>e.getClientRects().length).map(e=>({cls:e.className,r:e.getBoundingClientRect()}))})`));
@@ -152,6 +190,27 @@ try {
   await plaintiff.js(`document.querySelector('.court-door a').click();document.querySelector('#menu-panel a[href="#gallery"]').click()`);await wait(500);
   assert.equal(await plaintiff.js(`document.querySelectorAll('#dialog-body .gallery-art').length`),6);assert.equal(await plaintiff.js(`!!document.querySelector('#dialog-body .api-error')`),false);
   await plaintiff.call('Network.setBlockedURLs',{urls:[]});
+ });
+ await check('Real-time 60-second local demo: separate accounts, actual votes, result and next docket',async()=>{
+  const isolated=openTemporaryDemoDatabase(),normalBase=base;
+  let demo;
+  try{
+   demo=createServer({db:isolated.db,port:0,host:'127.0.0.1'});await new Promise((yes,no)=>{demo.server.once('error',no);demo.server.listen(0,'127.0.0.1',yes);});base='http://127.0.0.1:'+demo.server.address().port;
+   const users=[];for(const name of ['demo_author','demo_one','demo_two','demo_three']){const p=await readyPage();await register(p,name);users.push(p);}
+   const author=users[0];await open(author,'daily');assert.equal(await author.js(`!!document.querySelector('[data-demo-notice]')`),true);assert.equal(await author.js(`document.documentElement.hasAttribute('data-local-demo')`),true);
+   async function question(title){await author.js(`document.querySelector('#daily-submit-panel').open=true`);await input(author,'[name="question"]',title);await input(author,'[name="choice1"]','Purple wig');await input(author,'[name="choice2"]','Golden crown');await author.js(`document.querySelector('[data-api-form="daily-submit"]').requestSubmit()`);await author.until(`document.querySelector('#dialog-body').textContent.includes(${JSON.stringify(title)}) && !document.querySelector('#dialog-body').textContent.includes('Opening the shared court')`);}
+   await question('Which tiny hat should Chog wear today?');const first=(await(await fetch(base+'/api/daily')).json()).current;
+   assert.equal(Date.parse(first.closes_at)-Date.parse(first.opened_at),60000);assert.equal(first.participation,0);
+   await question('Which tiny hat should Chog wear next?');
+   for(const p of users.slice(1)){await open(p,'daily');await p.js(`document.querySelector('[name="choice"][value="0"]').click();document.querySelector('[data-api-form="daily-vote"]').requestSubmit()`);await p.until(`!!document.querySelector('#daily-current [data-daily-recorded]')`);}
+   const pending=(await(await fetch(base+'/api/daily')).json()).current;assert.equal(pending.participation,3);assert.equal(pending.result,null);
+   console.log('Waiting for the actual demo deadline (no clock override):',first.closes_at);
+   while(Date.now()<Date.parse(first.closes_at))await wait(Math.min(1000,Date.parse(first.closes_at)-Date.now()+10));
+   await author.js(`document.querySelector('[data-daily-refresh]').click()`);await author.until(`document.querySelector('#daily-current h3')?.textContent==='Which tiny hat should Chog wear next?'`);
+   assert.ok((await author.js(`document.querySelector('#daily-results [data-daily-result]').textContent`)).includes('Winner: Purple wig'));assert.ok((await author.js(`document.querySelector('#daily-results [data-daily-result]').textContent`)).includes('3 vote(s)'));
+   await screenshot(author,'real-60-second-demo');
+   assert.equal((await(await fetch(normalBase+'/api/config')).json()).daily.windowSeconds,86400);
+  }finally{base=normalBase;if(demo)await new Promise(resolve=>demo.server.close(resolve));isolated.db.close();await fs.rm(isolated.directory,{recursive:true,force:true});}
  });
  await check('No uncaught JavaScript exceptions in the shared application journey',async()=>assert.deepEqual(errors,[]));
 }catch(error){failure=error.stack||String(error);console.error(failure);process.exitCode=1;}

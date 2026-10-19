@@ -14,7 +14,7 @@ All writes except login/registration require the cookie, `Content-Type: applicat
 
 | Method / path | Request / response |
 | --- | --- |
-| `GET /api/health` | `{ok:true,database:"sqlite",schema:1}` after a database check |
+| `GET /api/health` | `{ok:true,database:"sqlite",schema:2}` after a database check |
 | `GET /api/config` | Court rules, account/NFT jury policy, published token metadata and disabled integration flags |
 | `GET /api/claims?offset=0` | `{cases,nextOffset}`; 50 cases per page, newest first |
 | `POST /api/claims` | `{title,category,argument,defendant}`; returns case, 201 |
@@ -28,7 +28,7 @@ All writes except login/registration require the cookie, `Content-Type: applicat
 | `POST /api/claims/:id/adjudicate` | `{}`; authenticated request, returns finalized result only after voting deadline; 409 if too early |
 | `GET /api/claims/:id/verdict` | Persisted final result; 409 while pending |
 | `GET /api/claims/:id/history` | Ordered case events, actor username, timestamp and detail; vote choices are not exposed in interim history |
-| `GET /api/profile` | Signed-in user's actual participation, badges, score and case history |
+| `GET /api/profile` | Signed-in user's actual participation, badges, score, case history and separate `dailyHistory` (latest 20 submitted/voted questions) |
 | `GET /api/reputation?chainId=…&collectionAddress=…&tokenId=…` | Historical verified NFT record, if one exists; 404 for unverified identities |
 | `GET /api/nominations` | Disabled status and exact verification blockers; no fabricated featured case |
 | `POST /api/nominations` | Always 503 until verified holder integration and a published policy are implemented |
@@ -37,6 +37,8 @@ All writes except login/registration require the cookie, `Content-Type: applicat
 Unknown fields on implemented case mutations are rejected. Clients cannot choose another plaintiff, supply final outcomes, forge NFT associations, or override deadlines/quorum. Case categories are `Community`, `Memes`, `Chog lore`. A defendant must be an existing, different active account.
 
 ## Lifecycle and verdict rules
+
+These rules apply to Community Court `/api/claims`, not the separate Daily Docket below. They have not changed.
 
 `OPEN → EVIDENCE_RESPONSE → VOTING → FINALIZED`.
 
@@ -63,3 +65,26 @@ NFT identity uses `eip155:<chainId>:erc721:<lowercase collection>/<decimal token
 Errors use `{ "error": { "code": "…", "message": "…" } }` with 400 malformed JSON, 401 authentication, 403 authorization/CSRF/origin, 404 missing record, 409 duplicate/phase conflict, 413 size limit, 415 content type, 422 validation, 429 rate limit, 503 unavailable integration. Unexpected errors return a generic 500; stack traces and SQL are not sent to browsers.
 
 Login/registration: 20 attempts per source IP per minute. Authenticated writes: 60 per account per minute. Case creation: 20 per account per rolling 24 hours. In-memory request limits are per process and reset on restart; deploy one instance with the SQLite volume. Reverse-proxy traffic currently shares its proxy IP bucket; do not trust arbitrary client-forwarded IP headers.
+
+## Daily Docket
+
+Uses the same sessions, active-account checks, CSRF/origin checks and write rate limit. No NFT policy or wallet requirements apply. Daily records and results are separate from claims and never update jury badges, streaks, score, or verdicts.
+
+| Method / path | Request / response |
+| --- | --- |
+| `GET /api/daily` | `{config,server_time,current,next,previous,history,can_submit}`; previous = latest 5 results, history = current account's latest 20 submitted/voted questions |
+| `POST /api/daily` | `{question,choices:["First choice","Second choice"]}`; returns question, 201 |
+| `GET /api/daily/:id` | Queued, voting or closed question; 404 if missing |
+| `POST /api/daily/:id/votes` | `{choice:0}`; zero-based choice position, returns question, 201 |
+
+Question: 8–160 trimmed characters. Exactly 2–4 different case-insensitive trimmed text choices, 1–120 characters each. Unknown fields rejected. One QUEUED question per author; an author may submit the next question after their previous one opens. Questions and choices cannot be edited. No uploaded contestant entries.
+
+Question fields include `id`, `question`, `author`, `author_id`, `state` (`QUEUED`, `VOTING`, `CLOSED`), `slot`, `opened_at`, `closes_at`, `min_quorum:3`, `choices:[{position,label}]`, `participation`, `my_choice` (null or integer), `eligibility`, `result`, and `source`. Public results never reveal individual other voters' choices.
+
+Selection/finalization runs in a SQLite transaction on daily requests and profile history reads. One question per UTC date; oldest eligible queued question first, deterministic insertion-order tie breaking. A late opening still closes at the next UTC midnight. Expired questions close on the next request; future slots are not backfilled after idle days. Empty queues stay empty until someone submits. Choice counts remain absent until closing.
+
+At least 3 votes are required. Result `{reason,total,counts:[{position,votes}],finalized_at}` has reason `WINNER` for one highest count with quorum, `TIE` for tied highest counts with quorum, or `INSUFFICIENT_PARTICIPATION` below quorum (including zero votes). A winner is the unique leading choice, not a GUILTY/INNOCENT finding. Counts are stored once; no public edit/reopen endpoint exists. Finalized time is processing time, potentially later than the deadline.
+
+`/api/config` adds `daily:{demo,windowSeconds,quorum,closing}`. Normal: 86400-second UTC slots. Only the dedicated fresh temporary-database runner uses 60 seconds from opening, with `source:local-demo`; no environment switch can shorten normal trials. In that runner the next question opens on the first request after closing, receiving a full new 60-second window. Existing claim rules remain independent.
+
+Additional errors: `QUEUE_LIMIT` 409, `AUTHOR_VOTE` 403, `INVALID_CHOICE` 422, `DUPLICATE_VOTE` 409, `PHASE_CLOSED` 409. Authentication and server validation are authoritative even if the browser countdown is stale.

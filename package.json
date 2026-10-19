@@ -5,6 +5,7 @@
   "type": "module",
   "engines": { "node": ">=22.16.0" },
   "scripts": {
+    "demo": "node scripts/demo.mjs",
     "dev": "node --env-file-if-exists=.env server/index.mjs",
     "start": "node --env-file-if-exists=.env server/index.mjs",
     "build": "node scripts/build.mjs",

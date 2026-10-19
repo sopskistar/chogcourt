@@ -1,6 +1,7 @@
 import {createHash,randomBytes,randomUUID,scrypt as scryptCallback,timingSafeEqual} from 'node:crypto';
 import {promisify} from 'node:util';
-import {transaction} from './database.mjs';
+import {transaction,isDemoDatabase,SCHEMA_VERSION} from './database.mjs';
+import {createDaily} from './daily.mjs';
 import {CHOICES,verdictFrom,participationStats,tokenKey} from './rules.mjs';
 const scrypt=promisify(scryptCallback);
 const hash=value=>createHash('sha256').update(value).digest('hex');
@@ -12,6 +13,9 @@ const publicUser=u=>u?{id:u.id,username:u.username,created_at:u.created_at}:null
 const fields=(object,allowed)=>{if(Object.keys(object).some(k=>!allowed.includes(k)))fail(422,'UNKNOWN_FIELD','The request contains unsupported fields.');};
 const CATEGORIES=['Community','Memes','Chog lore'];
 export function createApplication({db,origin='http://127.0.0.1:4173',production=false,now=()=>new Date(),quorum=3,evidenceSeconds=86400,votingSeconds=86400,juryPolicy='account',registrationCode=''}) {
+  if(isDemoDatabase(db)&&(production||process.env.NODE_ENV==='production'||new URL(origin).hostname!=='127.0.0.1'||new URL(origin).protocol!=='http:'))throw Error('Local demo requires a loopback-only development server.');
+  const daily=createDaily({db,now});
+  const sessionName=isDemoDatabase(db)?'chog_demo_session':'chog_session';
   if(!['account','nft'].includes(juryPolicy))throw Error('JURY_POLICY must be account or nft');
   for(const n of [quorum,evidenceSeconds,votingSeconds])if(!Number.isSafeInteger(n)||n<1)throw Error('Court rule values must be positive integers');
   const stamp=()=>now().toISOString();
@@ -59,7 +63,7 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
     return {...c,plaintiff:names.find(u=>u.id===c.plaintiff_id).username,defendant:names.find(u=>u.id===c.defendant_id).username,source:'shared-offchain',evidence_count:evidenceCount,jury_participation:votes,eligibility:eligible(c,user),my_vote:user?db.prepare('SELECT choice FROM votes WHERE claim_id=? AND user_id=?').get(c.id,user.id)?.choice||null:null,ready:db.prepare('SELECT user_id FROM readiness WHERE claim_id=?').all(c.id).map(r=>r.user_id),response:db.prepare('SELECT id,body,created_at FROM responses WHERE claim_id=?').get(c.id)||null,verdict:db.prepare('SELECT * FROM verdicts WHERE claim_id=?').get(c.id)||null,chaos:{score,label:score<25?'Low Chaos':score<60?'Court Is Heating Up':'Maximum Chaos',basis:'8 × evidence items (max 5) + 4 × eligible account jurors (max 15). Activity only; never affects the verdict.'}};
   }
   function session(request) {
-    const token=request.headers.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith('chog_session='))?.slice(13);
+    const token=request.headers.get('cookie')?.split(';').map(v=>v.trim()).find(v=>v.startsWith(sessionName+'='))?.slice(sessionName.length+1);
     if(!token||!/^[a-f0-9]{64}$/.test(token))return null;
     return db.prepare('SELECT u.*,s.csrf,s.token_hash FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND u.active=1').get(hash(token),stamp())||null;
   }
@@ -69,13 +73,13 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
     db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(hash(token),user.id,new Date(+now()+7*86400000).toISOString(),csrf);
     return {token,csrf};
   }
-  const cookie=token=>`chog_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${token?604800:0}${production?'; Secure':''}`;
+  const cookie=token=>`${sessionName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${token?604800:0}${production?'; Secure':''}`;
   const json=(data,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers}});
   const chain={network:'Monad',chainId:143,tokenContract:'0x350035555E10d9AfAF1566AaebfCeD5BA6C27777',tokenSource:'https://www.chog.xyz/',nftCollection:null,nominationThreshold:null,walletVerification:false,balanceVerified:false,nominationEnabled:false,blocker:'Official NFT collection, wallet authentication, and holder eligibility policy are not configured. No balances or ownership have been verified.'};
   return async function handle(request,{ip='local'}={}) {
     try {
       const url=new URL(request.url),path=url.pathname,method=request.method;
-      if(path==='/api/health'&&method==='GET'){db.prepare('SELECT 1').get();return json({ok:true,database:'sqlite',schema:1});}
+      if(path==='/api/health'&&method==='GET'){db.prepare('SELECT 1').get();return json({ok:true,database:'sqlite',schema:SCHEMA_VERSION});}
       if(!path.startsWith('/api/'))return json({error:{code:'NOT_FOUND',message:'API route not found.'}},404);
       const user=session(request);let body={};
       if(method!=='GET') {
@@ -90,7 +94,12 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
           rate('write:'+user.id,60);
         }
       }
-      if(path==='/api/config'&&method==='GET')return json({source:'shared-offchain',juryPolicy,quorum,evidenceSeconds,votingSeconds,chain,registrationRequiresCode:!!registrationCode});
+      if(path==='/api/config'&&method==='GET')return json({source:isDemoDatabase(db)?'local-demo':'shared-offchain',juryPolicy,quorum,evidenceSeconds,votingSeconds,chain,registrationRequiresCode:!!registrationCode,daily:daily.config});
+      if(path==='/api/daily'&&method==='GET')return json(daily.list(user));
+      if(path==='/api/daily'&&method==='POST')return json(daily.submit(body,user),201);
+      const dailyMatch=path.match(/^\/api\/daily\/([a-f0-9-]{36})(?:\/(votes))?$/);
+      if(dailyMatch&&!dailyMatch[2]&&method==='GET')return json(daily.get(dailyMatch[1],user));
+      if(dailyMatch?.[2]==='votes'&&method==='POST')return json(daily.vote(dailyMatch[1],body,user),201);
       if(path==='/api/auth/me'&&method==='GET')return json({user:publicUser(user),csrf:user?.csrf||null});
       if(['/api/auth/register','/api/auth/login'].includes(path)&&method==='POST') {
         rate('auth:'+ip,20);fields(body,['username','password','invitation']);
@@ -185,7 +194,7 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
         if(!user)fail(401,'AUTH_REQUIRED','Sign in to view your participation.');
         const votes=db.prepare('SELECT created_at FROM votes WHERE user_id=?').all(user.id),e=db.prepare('SELECT count(DISTINCT claim_id) AS n FROM evidence WHERE author_id=?').get(user.id).n;
         const cases=db.prepare('SELECT DISTINCT c.id FROM claims c LEFT JOIN votes v ON v.claim_id=c.id WHERE c.plaintiff_id=? OR c.defendant_id=? OR v.user_id=? ORDER BY c.created_at DESC').all(user.id,user.id,user.id).map(c=>view(syncClaim(c.id),user));
-        return json({user:publicUser(user),stats:participationStats(votes,e,now()),cases,identity:{verified:false,tokenKey:null},source:'shared-offchain'});
+        return json({user:publicUser(user),stats:participationStats(votes,e,now()),cases,identity:{verified:false,tokenKey:null},source:'shared-offchain',dailyHistory:daily.history(user)});
       }
       if(path==='/api/reputation'&&method==='GET') {
         const key=tokenKey(Object.fromEntries(url.searchParams));if(!key)fail(422,'INVALID_TOKEN_KEY','Provide chainId, collectionAddress and decimal tokenId.');

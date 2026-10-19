@@ -27,7 +27,7 @@ Open `http://127.0.0.1:4173`. There are no npm dependencies to install. If anoth
 
 ## Database and backups
 
-The migration SQL is in `server/migrations/001_initial.sql`; startup applies it transactionally only on a new database and checks the recorded version. Subsequent schema work must add versioned migrations and upgrade handling rather than edit an applied migration. WAL mode and foreign keys are enabled. Evidence bytes, hashes, cases, responses, votes, verdicts, sessions and history are stored in the same database.
+The original migration is `server/migrations/001_initial.sql`; additive `002_daily_trials.sql` adds separate daily questions, choices, votes and results. Startup transactionally upgrades schema 1 to 2 without rewriting court tables or changing stored claim rules. Reopening schema 2 is idempotent; unsupported versions are rejected. WAL mode and foreign keys are enabled. Evidence bytes, hashes, cases, responses, votes, verdicts, sessions and history are stored in the same database. Back up a deployed database before a separately approved migration; this enhancement does not authorize running against production.
 
 Configure host backups before inviting real users. Use SQLite's online backup API or stop the application while copying a consistent database; do not copy only the live main file and omit its WAL. Test restores in a separate environment. There is no automated backup scheduler, account recovery, content moderation, deletion workflow or malware scanning in this release.
 
@@ -67,3 +67,11 @@ Use an ignored local `.env` (loaded by npm scripts) for local overrides, or the 
 | `CHOG_MIN_BALANCE` | Reserved only: holder eligibility and selection policy must be supplied by the owner | Do not invent a threshold |
 
 The last two variables do not enable any integration by themselves. Wallet authentication and read-only ownership/balance adapters remain unimplemented and fail closed. A compatible hosting target/account and its persistent-storage configuration must be supplied before deployment; none has been provisioned or purchased here.
+
+## Daily Docket and local-only demonstration
+
+Normal Daily Docket has no new environment variables: it uses one UTC date per question, a fixed quorum of 3 and the existing account authentication. It does not use or change `MIN_QUORUM`, `EVIDENCE_SECONDS`, `VOTING_SECONDS` or `JURY_POLICY` for claims. Phase transitions are request-driven, not a background job. No moderation, public-entry upload or notification system is included.
+
+`npm run demo` runs `scripts/demo.mjs` without reading `.env`, binds `127.0.0.1:4174`, and creates a fresh temporary directory/database each time. Only a database object created by this dedicated temporary factory can enable short trials; supplying a regular SQLite path cannot opt in. The server rejects production mode, deployment/database environment settings, public origins, non-loopback bindings and nonmatching Host headers. The page and API label demo records. The demo is not copied into the production build (the `scripts/` directory is excluded).
+
+Do not tunnel, publish or deploy the local demo. If it refuses inherited `DATABASE_PATH`, `PUBLIC_ORIGIN`, `HOST`, `PORT` or `NODE_ENV=production`, use a clean development shell rather than changing hosting settings. Temporary records are retained at the printed path after stopping; a subsequent run never resumes them. No fake users, questions or votes are seeded. Follow the timed four-account walkthrough in README.md.

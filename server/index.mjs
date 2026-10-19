@@ -2,13 +2,15 @@ import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {openDatabase} from './database.mjs';
+import {openDatabase,isDemoDatabase} from './database.mjs';
 import {createApplication} from './app.mjs';
 
 export function createServer(options={}) {
   const production=options.production??process.env.NODE_ENV==='production';
   const port=options.port??Number(process.env.PORT||4173),host=options.host??process.env.HOST??'127.0.0.1';
   const origin=options.origin??process.env.PUBLIC_ORIGIN??`http://127.0.0.1:${port}`;
+  const demo=isDemoDatabase(options.db);
+  if(demo&&(production||process.env.NODE_ENV==='production'||process.env.DATABASE_PATH||process.env.PUBLIC_ORIGIN||process.env.HOST||host!=='127.0.0.1'||new URL(origin).hostname!=='127.0.0.1'||new URL(origin).protocol!=='http:'))throw Error('Local demo refuses deployment/database environment settings and non-loopback hosts.');
   if(production&&(!origin.startsWith('https://')||!process.env.DATABASE_PATH))throw Error('Production requires HTTPS PUBLIC_ORIGIN and DATABASE_PATH on a persistent volume.');
   const db=options.db||openDatabase(process.env.DATABASE_PATH||'./data/chogcourt.sqlite');
   const settings={db,origin,production,quorum:Number(process.env.MIN_QUORUM||3),evidenceSeconds:Number(process.env.EVIDENCE_SECONDS||86400),votingSeconds:Number(process.env.VOTING_SECONDS||86400),juryPolicy:process.env.JURY_POLICY||'account',registrationCode:process.env.REGISTRATION_CODE||'',...options};
@@ -19,6 +21,8 @@ export function createServer(options={}) {
     res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('X-Frame-Options','DENY');
     res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()');
     try {
+      // Reject public/rebound Host headers as well as binding only to loopback.
+      if(demo&&req.headers.host!==`127.0.0.1:${server.address().port}`){res.writeHead(403);res.end('Local demo is available only on its loopback URL.');return;}
       const path=new URL(req.url,'http://local').pathname;
       if(path.startsWith('/api/')) {
         const chunks=[];let length=0;
@@ -30,7 +34,7 @@ export function createServer(options={}) {
       const filename=path.startsWith('/assets/images/')?path.slice('/assets/images/'.length):null;
       if(!['/','/index.html'].includes(path)&&!images.has(filename)){res.writeHead(404);res.end('Not found');return;}
       let bytes=await readFile(resolve(root,filename?'assets/images/'+filename:'index.html'));
-      if(!filename)bytes=Buffer.from(bytes.toString('utf8').replace('<html lang="en">','<html lang="en" data-shared-court>'));
+      if(!filename)bytes=Buffer.from(bytes.toString('utf8').replace('<html lang="en">',`<html lang="en" data-shared-court${demo?' data-local-demo':''}>`));
       res.writeHead(200,{'Content-Type':filename?'image/png':'text/html; charset=utf-8','Cache-Control':filename?'public, max-age=3600':'no-cache'});res.end(req.method==='HEAD'?undefined:bytes);
     }catch {if(!res.headersSent)res.writeHead(500);res.end('Request failed');}
   });

@@ -1,5 +1,40 @@
 # Validation record
 
+## Daily Docket enhancement — 2026-10-19
+
+Final checks were run sequentially, with browser suites not competing for CPU:
+
+| Command | Final result |
+| --- | --- |
+| `npm test` | 21 passed, 0 failed (the original 12 court tests plus 9 daily/migration/demo checks) |
+| `npm run test:frontend` | 21 passed, 0 failed |
+| `npm run test:browser` | 22 passed, 0 failed |
+| `npm run build` | Passed; regenerated after session recovery to confirm completion |
+| `git diff --check` | Passed |
+| `npm run demo` smoke check | Passed on 127.0.0.1:4174; stopped afterward |
+
+Final browser report: `/tmp/chog-app-X2EB8y/report.json`. Final frontend report: `/tmp/chogcourt-frontend-pudMlT/report.json`. These are local temporary artifacts, not repository files or public URLs. Backend results were recorded in the terminal. The real-time demo screenshot was inspected.
+
+New coverage: submission validation and text escaping, immutable choices, one queued question per author, authenticated/non-author voting, inactive-account rejection, duplicate voting, hidden interim tallies, actual plurality/tie/insufficient-participation results, exact UTC boundary, idempotent concurrent rollover, FIFO selection without backfilled dates, unchanged claims, restart persistence, history with no jury-score changes, and daily account access while NFT court voting is unavailable. Migration tests create a populated temporary v1 database, upgrade it, compare preserved rows, and reopen v2 idempotently.
+
+The browser suite registers independent users, submits two questions through the forms, votes, reveals the result, opens the next question and checks refresh persistence. Its separate local-demo test uses a fresh temporary database and waits an **actual 60 seconds**, without changing the clock, before checking a stored three-vote result and the next trial. No users or votes are seeded in the demo runner. Backend safety checks reject public Host headers, non-loopback bindings, production mode and inherited deployment settings; normal databases retain UTC-day trials. Demo sessions use a different cookie name from normal court sessions.
+
+Chromium was tested in both themes at 1440×900, 1280×800, 1024×768, 768×1024, 390×844, 360×800 and 844×390. Existing frontend checks also retain 21 viewport/device configurations, motion, reduced-motion and menu coverage. Firefox, WebKit and physical devices were not tested.
+
+Failures investigated during this enhancement:
+
+- Sandbox restrictions initially prevented localhost binding (`EPERM`); suites were rerun with approved local-server/browser access.
+- The forged-Host test initially used Node fetch, which normalized the Host header. It now uses Node HTTP to send the actual forged header and asserts rejection, rather than weakening the safety check.
+- An intermediate browser run inspected a header still using the previous viewport's scale after a fixed 80 ms delay. The test now waits for the requested viewport, CSS mode and calculated scale before applying the unchanged overflow/overlap assertions. No animation constants or application resize behavior were changed. The subsequent full run passed all 22 checks.
+
+An additional actual `npm run demo` smoke verified schema 2 health, the 60-second demo flag, unchanged 86400-second Community Court windows, demo-labelled HTML and all seven PNG responses. Its isolated database was `/tmp/chog-docket-demo-b9S6oB/demo.sqlite`; the server was stopped, and no normal or production database was opened. A read-only comparison confirmed that the existing claims/evidence/response/readiness/vote/verdict/history route block matches the preceding commit byte-for-byte. Court rules, migration 001, artwork and embedded fonts were preserved.
+
+Changed files for this enhancement: `index.html`, `package.json`, `README.md`, `server/app.mjs`, `server/database.mjs`, `server/index.mjs`, `tests/backend.test.mjs`, `tests/application.mjs`, `docs/API.md`, `docs/DEPLOYMENT.md`, and `docs/TESTING.md`. Added: `server/daily.mjs`, `server/migrations/002_daily_trials.sql`, and `scripts/demo.mjs`.
+
+No deployment, publishing, production migration, wallet integration, payments, or push was performed. The earlier validation record below is retained as historical context.
+
+## Original frontend/backend validation — 2026-10-13
+
 Validated locally on 2026-10-13 (America/New_York), using Node 22.23.1 and installed Chromium 1234. No physical phone, Firefox or WebKit executable was available. Docker was not built or run. No production deployment or live-domain verification occurred.
 
 ## Executed checks

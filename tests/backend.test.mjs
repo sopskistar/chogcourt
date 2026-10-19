@@ -1,10 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,rm,readFile} from 'node:fs/promises';
+import {DatabaseSync} from 'node:sqlite';
+import {spawnSync} from 'node:child_process';
+import {get as httpGet} from 'node:http';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {openDatabase} from '../server/database.mjs';
+import {openDatabase,openTemporaryDemoDatabase,isDemoDatabase} from '../server/database.mjs';
+import {createServer} from '../server/index.mjs';
 import {createApplication} from '../server/app.mjs';
 import {verdictFrom,participationStats,tokenKey,saveVerifiedToken} from '../server/rules.mjs';
 
@@ -113,4 +117,127 @@ test('Malformed JSON, unknown routes and oversized evidence return explicit erro
   assert.equal((await f.call('/api/not-a-route')).status,404);const c=await f.claim();
   assert.equal((await f.call(`/api/claims/${c.id}/evidence`,{method:'POST',actor:f.plaintiff,body:{label:'Oversized attachment',base64:Buffer.alloc(1048577).toString('base64')}})).status,413);
  }finally{f.close();}
+});
+
+const dailyQuestion={question:'Which tiny hat should Chog wear to court?',choices:['Purple wig','Golden crown','Tiny cap']};
+async function submitDaily(f,actor=f.plaintiff,body=dailyQuestion){const r=await f.call('/api/daily',{method:'POST',actor,body});assert.equal(r.status,201,JSON.stringify(r.data));return r.data;}
+
+test('Daily submissions validate fixed choices, authenticate accounts and enforce one queued question',async()=>{
+ const f=await fixture();try{
+  assert.equal((await f.call('/api/daily')).data.current,null);
+  assert.equal((await f.call('/api/daily',{method:'POST',body:dailyQuestion})).status,401);
+  assert.equal((await f.call('/api/daily',{method:'POST',actor:f.plaintiff,body:dailyQuestion,headers:{'X-CSRF-Token':'wrong'}})).status,403);
+  for(const body of [{...dailyQuestion,question:'bad'},{...dailyQuestion,choices:['one']},{...dailyQuestion,choices:['One',' one ']},{...dailyQuestion,choices:['a','b','c','d','e']},{...dailyQuestion,choices:[1,'b']},{...dailyQuestion,author_id:'forged'},{...dailyQuestion,closes_at:'2026-10-13'}])assert.equal((await f.call('/api/daily',{method:'POST',actor:f.plaintiff,body})).status,422);
+  const first=await submitDaily(f);assert.equal(first.state,'VOTING');assert.equal(first.closes_at,'2026-10-14T00:00:00.000Z');assert.equal(first.min_quorum,3);
+  const second=await submitDaily(f);assert.equal(second.state,'QUEUED');
+  assert.equal((await f.call('/api/daily',{method:'POST',actor:f.plaintiff,body:dailyQuestion})).status,409);
+  assert.equal((await f.call('/api/daily/'+second.id+'/votes',{method:'POST',actor:f.juror,body:{choice:0}})).status,409);
+  const list=(await f.call('/api/daily',{actor:f.plaintiff})).data;assert.equal(list.current.id,first.id);assert.equal(list.next.id,second.id);assert.equal(list.can_submit,false);assert.equal(list.config.demo,false);assert.equal(list.config.windowSeconds,86400);
+  assert.equal((await f.call('/api/daily/00000000-0000-0000-0000-000000000000')).status,404);
+ }finally{f.close();}
+});
+
+test('Daily voting excludes authors, inactive accounts and duplicates; interim tallies stay private',async()=>{
+ const f=await fixture();try{
+  const t=await submitDaily(f),route='/api/daily/'+t.id+'/votes';
+  assert.equal((await f.call(route,{method:'POST',body:{choice:0}})).status,401);
+  assert.equal((await f.call(route,{method:'POST',actor:f.plaintiff,body:{choice:0}})).status,403);
+  for(const choice of [-1,3,1.5,'0',null])assert.equal((await f.call(route,{method:'POST',actor:f.juror,body:{choice}})).status,422);
+  const responses=await Promise.all([0,1].map(choice=>f.call(route,{method:'POST',actor:f.juror,body:{choice}})));assert.deepEqual(responses.map(r=>r.status).sort(),[201,409]);
+  const mine=(await f.call('/api/daily/'+t.id,{actor:f.juror})).data;assert.equal(mine.my_choice,0);assert.equal(mine.result,null);assert.equal(mine.eligibility.eligible,false);
+  const anonymous=(await f.call('/api/daily/'+t.id)).data;assert.equal(anonymous.my_choice,null);assert.equal(anonymous.participation,1);assert.equal(anonymous.choices[0].votes,undefined);assert.equal(anonymous.result,null);
+  f.db.prepare('UPDATE users SET active=0 WHERE id=?').run(f.defendant.user.id);
+  assert.equal((await f.call(route,{method:'POST',actor:f.defendant,body:{choice:1}})).status,401);
+  const profile=(await f.call('/api/profile',{actor:f.juror})).data;assert.equal(profile.stats.votes,0);assert.equal(profile.stats.score,0);assert.deepEqual(profile.stats.badges,[false,false,false]);assert.equal(profile.dailyHistory[0].id,t.id);
+ }finally{f.close();}
+});
+
+test('Daily exact UTC deadline finalizes once, rejects late votes and opens the queued trial',async()=>{
+ const f=await fixture();try{
+  const first=await submitDaily(f),second=await submitDaily(f),j2=await f.register('daily_two');
+  for(const [actor,choice]of [[f.juror,0],[f.defendant,0],[j2,1]])assert.equal((await f.call('/api/daily/'+first.id+'/votes',{method:'POST',actor,body:{choice}})).status,201);
+  f.advance(43199.999);assert.equal((await f.call('/api/daily/'+first.id)).data.result,null);
+  f.advance(.001);
+  const requests=await Promise.all(Array.from({length:8},()=>f.call('/api/daily')));assert.ok(requests.every(r=>r.data.current.id===second.id));
+  const result=requests[0].data.previous[0].result;assert.equal(result.reason,'WINNER');assert.equal(result.total,3);assert.deepEqual(result.counts.map(c=>c.votes),[2,1,0]);
+  assert.equal((await f.call('/api/daily/'+first.id+'/votes',{method:'POST',actor:j2,body:{choice:0}})).status,409);
+  assert.equal(f.db.prepare('SELECT count(*) AS n FROM daily_results WHERE trial_id=?').get(first.id).n,1);
+  assert.deepEqual((await f.call('/api/daily/'+first.id)).data.result,result);
+  assert.equal(requests[0].data.current.closes_at,'2026-10-15T00:00:00.000Z');
+ }finally{f.close();}
+});
+
+test('Daily plurality, ties, zero votes and insufficient participation use the documented rules',async()=>{
+ for(const choices of [[],[0,0],[0,0,1,1],[0,0,1,2]]){
+  const f=await fixture();try{
+   const t=await submitDaily(f),actors=[f.juror,f.defendant,await f.register('daily_three'),await f.register('daily_four')];
+   for(let i=0;i<choices.length;i++)assert.equal((await f.call('/api/daily/'+t.id+'/votes',{method:'POST',actor:actors[i],body:{choice:choices[i]}})).status,201);
+   f.advance(43200);const data=(await f.call('/api/daily/'+t.id)).data;
+   assert.equal(data.state,'CLOSED');assert.equal(data.result.reason,choices.length<3?'INSUFFICIENT_PARTICIPATION':choices[3]===2?'WINNER':'TIE');assert.equal(data.result.total,choices.length);
+  }finally{f.close();}
+ }
+});
+
+test('Daily account participation remains available when the separate court NFT policy is disabled',async()=>{
+ const f=await fixture({juryPolicy:'nft'});try{const t=await submitDaily(f);assert.equal((await f.call('/api/daily/'+t.id+'/votes',{method:'POST',actor:f.juror,body:{choice:0}})).status,201);assert.equal((await f.call('/api/config')).data.chain.walletVerification,false);}finally{f.close();}
+});
+
+test('Daily FIFO skips missed dates without fabricating trials; claims and their rules are untouched',async()=>{
+ const f=await fixture();try{
+  const c=await f.claim(),snapshot=f.db.prepare('SELECT * FROM claims WHERE id=?').get(c.id);
+  const a=await submitDaily(f),b=await submitDaily(f,f.defendant),d=await submitDaily(f,f.juror);
+  f.advance(3*86400);const list=(await f.call('/api/daily')).data;assert.equal(list.current.id,b.id);assert.equal(list.next.id,d.id);assert.equal(list.previous[0].id,a.id);
+  assert.equal(list.current.slot,'2026-10-16');assert.equal(f.db.prepare('SELECT count(*) AS n FROM daily_trials').get().n,3);
+  assert.deepEqual(f.db.prepare('SELECT * FROM claims WHERE id=?').get(c.id),snapshot);
+ }finally{f.close();}
+});
+
+test('Migration 002 preserves a populated v1 court and is idempotent on restart',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'chog-upgrade-test-')),path=join(directory,'court.sqlite');
+ let db=new DatabaseSync(path);
+ try{
+  db.exec(await readFile(new URL('../server/migrations/001_initial.sql',import.meta.url),'utf8'));
+  for(const id of ['a','b'])db.prepare('INSERT INTO users(id,username,password_hash,salt,created_at) VALUES(?,?,?,?,?)').run(id,id,'fixture','fixture','2026-10-13T00:00:00Z');
+  db.prepare('INSERT INTO claims(id,title,category,argument,plaintiff_id,defendant_id,state,created_at,response_deadline,voting_seconds,min_quorum,jury_policy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('existing','Existing case','Community','Existing argument','a','b','OPEN','2026-10-13T00:00:00Z','2026-10-14T00:00:00Z',86400,3,'account');
+  const before=db.prepare('SELECT * FROM claims').all();db.close();db=openDatabase(path);
+  assert.equal(db.prepare('SELECT max(version) AS n FROM migrations').get().n,2);assert.deepEqual(db.prepare('SELECT * FROM claims').all(),before);assert.equal(db.prepare('SELECT count(*) AS n FROM users').get().n,2);
+  db.close();db=openDatabase(path);assert.deepEqual(db.prepare('SELECT * FROM claims').all(),before);assert.equal(db.prepare('SELECT count(*) AS n FROM migrations').get().n,2);
+ }finally{db.close();await rm(directory,{recursive:true,force:true});}
+});
+
+test('Daily votes, queue, results and personal history persist across database restarts',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'chog-daily-test-')),path=join(directory,'court.sqlite');const f=await fixture({path});let first,second;
+ try{first=await submitDaily(f);second=await submitDaily(f);await f.call('/api/daily/'+first.id+'/votes',{method:'POST',actor:f.juror,body:{choice:1}});f.advance(43200);await f.call('/api/daily');}finally{f.close();}
+ const db=openDatabase(path),app=createApplication({db,origin,now:()=>new Date('2026-10-14T01:00:00Z')});
+ try{
+  const login=await app(new Request(origin+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify({username:'juror',password})}));assert.equal(login.status,200);
+  const cookie=login.headers.get('set-cookie').split(';')[0];
+  const list=await(await app(new Request(origin+'/api/daily',{headers:{Cookie:cookie}}))).json();assert.equal(list.current.id,second.id);assert.equal(list.previous[0].id,first.id);assert.equal(list.previous[0].result.total,1);assert.equal(list.history[0].my_choice,1);
+ }finally{db.close();await rm(directory,{recursive:true,force:true});}
+});
+
+test('60-second demo is fresh, loopback-only, explicitly labelled and cannot reuse a normal database',async()=>{
+ const {db,directory}=openTemporaryDemoDatabase(),normal=openDatabase(':memory:');let runner;
+ try{
+  assert.equal(isDemoDatabase(normal),false);assert.equal(isDemoDatabase(db),true);
+  assert.equal((await(await createApplication({db:normal})(new Request('http://127.0.0.1:4173/api/config'))).json()).daily.windowSeconds,86400);
+  assert.throws(()=>createServer({db,host:'0.0.0.0'}),/Local demo/);
+  assert.throws(()=>createApplication({db,production:true}),/Local demo/);
+  assert.throws(()=>createApplication({db,origin:'https://public.example'}),/Local demo/);
+  let time=Date.parse('2026-10-13T12:34:59.000Z');runner=createServer({db,port:0,host:'127.0.0.1',now:()=>new Date(time)});await new Promise(resolve=>runner.server.listen(0,'127.0.0.1',resolve));
+  const base='http://127.0.0.1:'+runner.server.address().port;
+  const config=await(await fetch(base+'/api/config')).json();assert.equal(config.daily.demo,true);assert.equal(config.daily.windowSeconds,60);assert.equal(config.evidenceSeconds,86400);assert.equal(config.votingSeconds,86400);
+  assert.ok((await(await fetch(base)).text()).includes('data-local-demo'));
+  // fetch normalizes Host; use HTTP directly to actually send the forged header.
+  const forged=await new Promise((resolve,reject)=>httpGet(base,{headers:{Host:'public.example'}},response=>{response.resume();resolve(response.statusCode);}).on('error',reject));assert.equal(forged,403);
+  const signup=await fetch(base+'/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({username:'demo_author',password})}),auth=await signup.json();assert.equal(signup.status,200);
+  assert.ok(signup.headers.get('set-cookie').startsWith('chog_demo_session='));
+  const headers={'Content-Type':'application/json',Origin:base,Cookie:signup.headers.get('set-cookie').split(';')[0],'X-CSRF-Token':auth.csrf};
+  const response=await fetch(base+'/api/daily',{method:'POST',headers,body:JSON.stringify(dailyQuestion)}),first=await response.json();assert.equal(response.status,201);assert.equal(Date.parse(first.closes_at)-time,60000);
+  time+=59999;assert.equal((await(await fetch(base+'/api/daily')).json()).current.id,first.id);time++;
+  assert.equal((await(await fetch(base+'/api/daily')).json()).previous[0].result.reason,'INSUFFICIENT_PARTICIPATION');
+  for(const patch of [{NODE_ENV:'production'},{DATABASE_PATH:'/do-not-touch.sqlite'},{PUBLIC_ORIGIN:'https://public.example'},{HOST:'0.0.0.0'},{PORT:'8000'}]){
+   const run=spawnSync(process.execPath,['scripts/demo.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,...patch},encoding:'utf8'});assert.notEqual(run.status,0);assert.match(run.stderr,/Demo refuses deployment settings/);
+  }
+ }finally{if(runner)await new Promise(resolve=>runner.server.close(resolve));db.close();normal.close();await rm(directory,{recursive:true,force:true});}
 });

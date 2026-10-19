@@ -16,6 +16,34 @@ Open http://127.0.0.1:4173. The server creates `data/chogcourt.sqlite` and appli
 
 The old static preview still works with `python3 -m http.server 4173 --bind 127.0.0.1`, but it intentionally exposes only the separate local-practice frontend. Use the Node server for shared accounts and records.
 
+## Daily Docket: one complete repeat-use loop
+
+Discover a community question → review 2–4 fixed text choices → vote → return for the result → open the next question. This is a separate community poll, not a dispute or legal finding. Community Court and `/api/claims` retain their existing rules.
+
+- Active signed-in accounts can submit questions; one queued question per author. Question/choices are immutable. No wallet or token is required.
+- The oldest queued question opens on the first request for the current UTC date. An empty day can be filled immediately; it still closes at the next 00:00 UTC. Missed days are not backfilled.
+- One non-editable vote per active, non-author account. Account identity does not establish unique people. Interim choice totals stay hidden.
+- At least 3 votes are required. A unique highest count wins; tied leaders yield a tie; fewer than 3 votes yield insufficient participation. Refresh after closing to record the result and open the next queued question.
+- Questions, choices, votes and results persist in SQLite. Reputation shows the latest 20 submitted/voted daily questions separately. Daily votes do not award court jury badges or increase its existing score.
+- No automatic content generation, image uploads, open contestant entries, prizes, token rewards, or holder nominations. Moderation is not implemented: use controlled participants for the hackathon demo.
+
+### Reliable local 60-second demo
+
+```sh
+npm run demo
+```
+
+Open **http://127.0.0.1:4174/#daily**. This is explicitly labelled LOCAL DEMO, binds only to loopback, rejects public Host headers, and always creates a fresh temporary SQLite database. It never loads `.env` or opens `data/chogcourt.sqlite`. Its separate session cookie does not replace your normal court login. Normal Daily Docket closes at UTC midnight; only this isolated demo uses a full 60 seconds from each opening. Community Court's evidence/voting defaults remain 24 hours even in the demo.
+
+1. Before submitting, register four accounts (an author and three voters), using separate browser profiles/contexts. Multiple tabs or incognito windows in the same profile may share a login. Use passwords of at least 12 characters; no wallet is involved.
+2. Open Daily Docket as the author. Expand **Submit the next question**, enter a question and at least two choices, then submit. The 60-second clock starts now.
+3. Immediately submit a second question; it appears under **Up next**.
+4. In each voter profile, open Daily Docket, select a choice, and click **Record my vote**. At least three different non-author accounts must vote before closing. Vote totals are real; nothing is prefilled.
+5. After 60 seconds, click **Refresh · reveal result / open next docket**. See the first result under **Recent results** and the next question open above it. Refresh another profile to confirm shared records.
+6. Open Reputation to see your daily history. Stop with Ctrl+C. The temporary path is printed; it remains available for inspection, but every new demo run starts fresh.
+
+The demo refuses `NODE_ENV=production` or inherited `DATABASE_PATH`, `PUBLIC_ORIGIN`, `HOST`, or `PORT`. Use a clean development shell if refused; do not change deployment settings. Port 4174 must be free. No public demo deployment is provided or authorized.
+
 ## What works
 
 - Shared accounts with salted scrypt passwords, HttpOnly sessions, CSRF protection, origin checks and server-side authorization. No wallet keys or seed phrases are requested.
@@ -54,7 +82,7 @@ The “Local practice examples” button keeps the previous browser-only fronten
 - Frontend: `index.html`, inline CSS/JavaScript/SVG; embedded Archivo/Inter WOFF2 and OFL license.
 - Backend: built-in Node HTTP, crypto and SQLite modules; no external runtime library.
 - Database: SQLite with WAL, foreign keys, transactional migrations/finalization, immutable history and uniqueness constraints.
-- Production: one Node/Docker instance and a persistent disk. Static-only or ephemeral serverless hosting is unsuitable without a database/runtime adapter.
+- Production: one Node/Docker instance and a persistent disk. Static-only or ephemeral serverless hosting is unsuitable without a database/runtime adapter. Schema 002 adds daily tables without changing existing court tables; startup upgrades schema 001 transactionally. Back up any deployed database before a separately approved upgrade.
 - Full endpoint contract: [docs/API.md](docs/API.md).
 - Hosting setup, migrations, backup requirements and phone testing: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
