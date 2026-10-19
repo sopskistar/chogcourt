@@ -33,8 +33,11 @@ All writes except login/registration require the cookie, `Content-Type: applicat
 | `GET /api/nominations` | Disabled status and exact verification blockers; no fabricated featured case |
 | `POST /api/nominations` | Always 503 until verified holder integration and a published policy are implemented |
 | `POST /api/wallet/challenge` | Always 503; no supported wallet authentication flow has been enabled |
+| `POST /api/wallet/inspect` | Signed-in account + CSRF; `{ "address": "0x…" }`. Read-only Monad/contract compatibility diagnostic, never ownership authentication or eligibility |
 
 Unknown fields on implemented case mutations are rejected. Clients cannot choose another plaintiff, supply final outcomes, forge NFT associations, or override deadlines/quorum. Case categories are `Community`, `Memes`, `Chog lore`. A defendant must be an existing, different active account.
+
+Wallet diagnostics accept only `address` (20-byte hex). Limit: 6 calls/account/minute and 60 total/minute per server instance. The server—not the browser—selects the RPC and fixed owner-provided contract. Responses include the observed `chainId`, `blockNumber`, `blockHash` and status `NOT_ERC721`, `NO_CONTRACT` or `COLLECTION_IDENTITY_CONFLICT`; **all** keep `ownershipVerified:false`, `walletAuthenticated:false`, `eligible:false` and `collectionTrusted:false`. RPC/network/malformed failures return 503; invalid addresses return 422. No balance, token record, signature, session-wallet binding or eligibility is created. Client-supplied addresses are untrusted observations. This endpoint deliberately cannot satisfy NFT jury policy while the NFT collection reference is disputed. See [BLOCKCHAIN.md](BLOCKCHAIN.md).
 
 ## Lifecycle and verdict rules
 

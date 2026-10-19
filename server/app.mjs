@@ -2,6 +2,7 @@ import {createHash,randomBytes,randomUUID,scrypt as scryptCallback,timingSafeEqu
 import {promisify} from 'node:util';
 import {transaction,isDemoDatabase,SCHEMA_VERSION} from './database.mjs';
 import {createDaily} from './daily.mjs';
+import {createWalletInspector,NFT_BLOCKER,OWNER_COLLECTION_REFERENCE} from './wallet.mjs';
 import {CHOICES,verdictFrom,participationStats,tokenKey} from './rules.mjs';
 const scrypt=promisify(scryptCallback);
 const hash=value=>createHash('sha256').update(value).digest('hex');
@@ -12,7 +13,7 @@ const username=value=>{const v=text(value,'Username',3,30).toLowerCase();if(!/^[
 const publicUser=u=>u?{id:u.id,username:u.username,created_at:u.created_at}:null;
 const fields=(object,allowed)=>{if(Object.keys(object).some(k=>!allowed.includes(k)))fail(422,'UNKNOWN_FIELD','The request contains unsupported fields.');};
 const CATEGORIES=['Community','Memes','Chog lore'];
-export function createApplication({db,origin='http://127.0.0.1:4173',production=false,now=()=>new Date(),quorum=3,evidenceSeconds=86400,votingSeconds=86400,juryPolicy='account',registrationCode=''}) {
+export function createApplication({db,origin='http://127.0.0.1:4173',production=false,now=()=>new Date(),quorum=3,evidenceSeconds=86400,votingSeconds=86400,juryPolicy='account',registrationCode='',walletInspector=createWalletInspector()}) {
   if(isDemoDatabase(db)&&(production||process.env.NODE_ENV==='production'||new URL(origin).hostname!=='127.0.0.1'||new URL(origin).protocol!=='http:'))throw Error('Local demo requires a loopback-only development server.');
   const daily=createDaily({db,now});
   const sessionName=isDemoDatabase(db)?'chog_demo_session':'chog_session';
@@ -75,7 +76,7 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
   }
   const cookie=token=>`${sessionName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${token?604800:0}${production?'; Secure':''}`;
   const json=(data,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers}});
-  const chain={network:'Monad',chainId:143,tokenContract:'0x350035555E10d9AfAF1566AaebfCeD5BA6C27777',tokenSource:'https://www.chog.xyz/',nftCollection:null,nominationThreshold:null,walletVerification:false,balanceVerified:false,nominationEnabled:false,blocker:'Official NFT collection, wallet authentication, and holder eligibility policy are not configured. No balances or ownership have been verified.'};
+  const chain={network:'Monad',chainId:143,tokenContract:'0x350035555E10d9AfAF1566AaebfCeD5BA6C27777',tokenSource:'https://www.chog.xyz/',nftCollection:null,ownerCollectionReference:OWNER_COLLECTION_REFERENCE,walletConnection:'injected-eip1193',nominationThreshold:null,walletVerification:false,balanceVerified:false,nominationEnabled:false,blocker:NFT_BLOCKER};
   return async function handle(request,{ip='local'}={}) {
     try {
       const url=new URL(request.url),path=url.pathname,method=request.method;
@@ -95,6 +96,10 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
         }
       }
       if(path==='/api/config'&&method==='GET')return json({source:isDemoDatabase(db)?'local-demo':'shared-offchain',juryPolicy,quorum,evidenceSeconds,votingSeconds,chain,registrationRequiresCode:!!registrationCode,daily:daily.config});
+      if(path==='/api/wallet/inspect'&&method==='POST'){
+        fields(body,['address']);rate('wallet:'+user.id,6);rate('wallet:global',60);
+        return json(await walletInspector(body.address));
+      }
       if(path==='/api/daily'&&method==='GET')return json(daily.list(user));
       if(path==='/api/daily'&&method==='POST')return json(daily.submit(body,user),201);
       const dailyMatch=path.match(/^\/api\/daily\/([a-f0-9-]{36})(?:\/(votes))?$/);

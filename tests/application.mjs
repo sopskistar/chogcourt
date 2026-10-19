@@ -8,6 +8,10 @@ import {launchBrowser,wait} from './browser-tools.mjs';
 
 const artifacts=await fs.mkdtemp(join(tmpdir(),'chog-app-')),checks=[],errors=[];
 const db=openDatabase(join(artifacts,'court.sqlite'));let time=Date.now(),runner,browser,base,failure=null;
+// Labelled RPC fixtures only; no real wallet or NFT ownership is simulated as
+// production verification. Existing court tests never need external RPC access.
+let walletFailure=false,walletDelay=false,releaseWallet;const walletChecks=[];
+async function walletInspector(address){walletChecks.push(address);if(walletDelay)await new Promise(resolve=>releaseWallet=resolve);if(walletFailure)throw Object.assign(Error('Monad RPC is unavailable. Ownership was not verified.'),{status:503,code:'RPC_UNAVAILABLE'});return {status:'NOT_ERC721',ownershipVerified:false,eligible:false,blockNumber:'0x123',message:'The supplied contract did not pass the ERC-721 checks. NFT jury access remains unavailable.'};}
 async function check(name,fn){await fn();checks.push(name);console.log('PASS '+name);}
 async function input(p,selector,value){await p.js(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}));})()`);}
 async function open(p,view,id){await p.js(`(()=>{const a=document.createElement('a');a.href=${JSON.stringify('#'+view)};${id?`a.dataset.openCase=${JSON.stringify(id)};`:''}document.body.appendChild(a);a.click();a.remove();})()`);await p.until(`document.querySelector('dialog').open && !document.querySelector('#dialog-body').textContent.includes('Opening the shared court')`);assert.equal(await p.js(`!!document.querySelector('#dialog-body > .api-error')`),false,await p.js(`document.querySelector('#dialog-body').textContent`));}
@@ -36,7 +40,7 @@ async function decodeImages(p,selector){
 }
 const contrastCheck=`(()=>{const luminance=c=>{const a=c.match(/[\\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4});return .2126*a[0]+.7152*a[1]+.0722*a[2]};return [...document.querySelectorAll('.dialog-intro,.field input,.action:not(:disabled),.api-error,.status-tag,.verdict-stamp')].filter(e=>e.getClientRects().length).map(e=>{let bg=getComputedStyle(e).backgroundColor,p=e;while(bg==='rgba(0, 0, 0, 0)'&&p.parentElement){p=p.parentElement;bg=getComputedStyle(p).backgroundColor}const a=luminance(getComputedStyle(e).color),b=luminance(bg);return {element:e.className,ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)}})})()`;
 try {
- runner=createServer({db,port:0,now:()=>new Date(time),evidenceSeconds:3600,votingSeconds:3600});await new Promise((yes,no)=>{runner.server.once('error',no);runner.server.listen(0,'127.0.0.1',yes);});base=`http://127.0.0.1:${runner.server.address().port}`;
+ runner=createServer({db,port:0,now:()=>new Date(time),evidenceSeconds:3600,votingSeconds:3600,walletInspector});await new Promise((yes,no)=>{runner.server.once('error',no);runner.server.listen(0,'127.0.0.1',yes);});base=`http://127.0.0.1:${runner.server.address().port}`;
  browser=await launchBrowser(artifacts);console.log('Available cached browsers:',browser.installed.join(', '));
  const plaintiff=await readyPage(),defendant=await readyPage(),juror=await readyPage();let caseId;
  await check('HTTP health, static images, server injection and private-file protection',async()=>{
@@ -46,6 +50,39 @@ try {
   for(const file of ['chog-court-logo.png','chog-court-judge.png','chog-official-pfp.png','verdict-machine.png','jury-streaks-daily-docket.png','chog-reputation-card.png','chog-case-of-the-day.png']){const r=await fetch(base+'/assets/images/'+file);assert.equal(r.status,200);assert.equal(r.headers.get('content-type'),'image/png');const bytes=Buffer.from(await r.arrayBuffer());assert.equal(bytes.subarray(0,8).toString('hex'),'89504e470d0a1a0a');}
  });
  await check('Independent browser sessions register and authenticate separate shared accounts',async()=>{await register(plaintiff,'plaintiff_browser');await register(defendant,'defendant_browser');await register(juror,'juror_browser');assert.ok((await plaintiff.js(`document.querySelector('.live-bar').textContent`)).includes('plaintiff_browser'));assert.ok((await defendant.js(`document.querySelector('.live-bar').textContent`)).includes('defendant_browser'));});
+ await check('Wallet UI handles missing provider and rejection; injected test wallet connects without signing',async()=>{
+  await open(juror,'account');await juror.js(`document.querySelector('[data-wallet="connect"]').click()`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('No browser wallet')`);
+  await juror.js(`window.walletFixture={address:'0x'+'a'.repeat(40),chain:'0x1',reject:true,calls:[],handlers:{}};window.ethereum={request:async q=>{const w=window.walletFixture;w.calls.push(q);if(q.method==='eth_requestAccounts'){if(w.reject)throw {code:4001};return [w.address]}if(q.method==='eth_accounts')return w.address?[w.address]:[];if(q.method==='eth_chainId')return w.chain;if(q.method==='wallet_switchEthereumChain'){w.chain=q.params[0].chainId;return null}throw Error('Forbidden or unexpected wallet method')},on:(e,f)=>window.walletFixture.handlers[e]=f,removeListener:(e,f)=>{if(window.walletFixture.handlers[e]===f)delete window.walletFixture.handlers[e]}};document.querySelector('[data-wallet="connect"]').click()`);
+  await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('rejected')`);assert.equal(walletChecks.length,0);
+  await juror.js(`window.walletFixture.reject=false;document.querySelector('[data-wallet="connect"]').focus()`);await key(juror,'Enter');await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('Wrong network')`);
+  assert.equal(await juror.js(`document.querySelector('[data-wallet-address]').textContent`),'0x'+'a'.repeat(40));assert.equal(walletChecks.length,0);
+  await juror.js(`document.querySelector('[data-wallet="switch"]').click()`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('ERC-721')`);assert.equal(walletChecks.length,1);
+  assert.ok((await juror.js(`document.querySelector('#wallet-panel').textContent`)).includes('NFT ownership: not verified'));
+ });
+ await check('Wallet account/network changes recheck; RPC failures and empty accounts never grant NFT eligibility',async()=>{
+  walletFailure=true;await juror.js(`window.walletFixture.address='0x'+'b'.repeat(40);window.walletFixture.handlers.accountsChanged([window.walletFixture.address])`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('RPC is unavailable')`);assert.equal(walletChecks.at(-1),'0x'+'b'.repeat(40));
+  walletFailure=false;const count=walletChecks.length;await juror.js(`window.walletFixture.chain='0x1';window.walletFixture.handlers.chainChanged('0x1')`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('Wrong network')`);assert.equal(walletChecks.length,count);
+  await juror.js(`window.walletFixture.chain='0x8f';window.walletFixture.handlers.chainChanged('0x8f')`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('ERC-721')`);assert.equal(walletChecks.length,count+1);
+  await juror.js(`window.walletFixture.address=null;window.walletFixture.handlers.accountsChanged([])`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('No account')`);assert.equal(await juror.js(`document.querySelector('[data-wallet-address]').textContent`),'No wallet connected');
+  assert.equal(db.prepare('SELECT count(*) n FROM tokens').get().n,0);
+ });
+ await check('Disconnect discards an in-flight check; provider disconnect and reload clear connection without changing court session',async()=>{
+  walletDelay=true;await juror.js(`window.walletFixture.address='0x'+'c'.repeat(40);document.querySelector('[data-wallet="connect"]').click()`);
+  for(let i=0;i<100&&!releaseWallet;i++)await wait(25);assert.equal(typeof releaseWallet,'function');await juror.js(`document.querySelector('[data-wallet="disconnect"]').click()`);releaseWallet();walletDelay=false;await wait(100);
+  assert.equal(await juror.js(`document.querySelector('[data-wallet-address]').textContent`),'No wallet connected');assert.ok((await juror.js(`document.querySelector('[data-wallet-status]').textContent`)).includes('Disconnected from this page'));
+  await juror.js(`document.querySelector('[data-wallet="connect"]').click()`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('ERC-721')`);await juror.js(`window.walletFixture.handlers.disconnect({code:4900})`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('Wallet disconnected')`);
+  assert.ok((await juror.js(`window.walletFixture.calls.map(q=>q.method)`)).every(m=>['eth_requestAccounts','eth_accounts','eth_chainId','wallet_switchEthereumChain'].includes(m)));
+  await reload(juror);await open(juror,'account');assert.equal(await juror.js(`document.querySelector('[data-wallet-address]').textContent`),'No wallet connected');assert.ok((await juror.js(`document.querySelector('.live-bar').textContent`)).includes('juror_browser'));
+ });
+ await check('Wallet panel fits light/purple desktop and mobile, with readable controls and keyboard focus',async()=>{
+  for(const [w,h]of [[1440,900],[390,844]])for(const theme of ['light','purple']){
+   await resize(juror,w,h);await juror.js(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);await open(juror,'account');
+   assert.equal(await juror.js(`(()=>{const d=document.querySelector('dialog');return d.scrollWidth<=d.clientWidth+1})()`),true);
+   for(const c of await juror.js(contrastCheck))assert.ok(c.ratio>=4.5,JSON.stringify(c));
+   await juror.js(`document.querySelector('[data-wallet="connect"]').focus()`);assert.equal(await juror.js(`document.activeElement.dataset.wallet`),'connect');
+  }
+  await resize(juror,1280,800);await juror.js(`document.documentElement.dataset.theme='light'`);
+ });
  await check('Primary CTA files a shared case visible to another browser',async()=>{
   await open(plaintiff,'file-a-case');await input(plaintiff,'[name="title"]','Did the Chog leave the gavel in the gallery?');await input(plaintiff,'[name="defendant"]','defendant_browser');await input(plaintiff,'[name="argument"]','The gallery camera shows a purple figure beside the court desk. We need both sides of the story.');await plaintiff.js(`document.querySelector('#shared-case-form').requestSubmit()`);await plaintiff.until(`!!document.querySelector('[data-shared-ready]')`);
   caseId=await plaintiff.js(`(async()=>{const r=await fetch('/api/claims');return (await r.json()).cases[0].id})()`);await open(defendant,'case',caseId);assert.ok((await defendant.js(`document.querySelector('#dialog-body').textContent`)).includes('Did the Chog leave the gavel'));assert.equal(await defendant.js(`!!document.querySelector('.verdict-stamp')`),false);

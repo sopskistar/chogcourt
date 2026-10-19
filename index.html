@@ -1203,6 +1203,55 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         if(!response.ok)throw Error(data.error?.message||'The court could not complete this request.');
         return data;
       }
+      // Wallet connection is session-only and never grants court authorization.
+      // No signatures, token transactions, balances, or ownership claims here.
+      const wallet={provider:null,address:null,chain:null,busy:false,message:'Connect an existing browser wallet. No signature, transaction, or payment is requested.',generation:0};
+      function walletPanel(){return `<section class="court-sheet" id="wallet-panel"><h3>Chog NFT juror identity</h3><p>Proposed role: a verified Chog token would identify an NFT juror across owner changes. <strong>Not enabled:</strong> the supplied collection address is published as the fungible $CHOG token. Account-based court and Daily Docket remain available.</p><p class="form-hint">Owner-supplied reference: <span class="evidence-hash">0x350035555e10d9afaf1566aaebfced5ba6c27777</span><br>Monad mainnet · chain ID 143. Connection alone does not prove control or NFT ownership. No wallet address is saved to your account.</p><div id="wallet-controls">${walletControls()}</div><p class="form-hint">An injected EIP-1193 wallet is required (browser extension or compatible wallet browser). QR/WalletConnect login is not implemented. Disconnect clears this page’s connection; revoke this site in your wallet to remove its permission.</p></section>`;}
+      function walletControls(){return `<p class="evidence-hash" data-wallet-address>${wallet.address?escapeHTML(wallet.address):'No wallet connected'}</p><p data-wallet-network>${wallet.chain?escapeHTML(wallet.chain==='0x8f'?'Monad / 143':'Unsupported network: '+wallet.chain):'Network not checked'}</p><p role="status" aria-live="polite" data-wallet-status>${escapeHTML(wallet.message)}</p><div class="button-row">${wallet.provider?`<button class="action secondary" data-wallet="disconnect">Disconnect wallet</button>${wallet.address?`<button class="action" data-wallet="${wallet.chain==='0x8f'?'inspect':'switch'}" ${wallet.busy?'disabled':''}>${wallet.chain==='0x8f'?'Recheck NFT compatibility':'Switch to Monad'}</button>`:''}`:`<button class="action" data-wallet="connect" ${wallet.busy?'disabled':''}>Connect wallet</button>`}</div><p class="form-hint">NFT ownership: not verified · NFT jury access: unavailable.</p>`;}
+      function paintWallet(){const box=$('#wallet-controls');if(!box)return;const focused=box.contains(document.activeElement)?document.activeElement.dataset.wallet:null;box.innerHTML=walletControls();if(focused)box.querySelector(`[data-wallet="${focused}"]`)?.focus({preventScroll:true});}
+      function detachWallet(message='Disconnected from this page. Court account and records are unchanged.'){
+        ++wallet.generation;for(const [event,fn]of [['accountsChanged',walletChanged],['chainChanged',walletChanged],['disconnect',walletDisconnected]])wallet.provider?.removeListener?.(event,fn);
+        Object.assign(wallet,{provider:null,address:null,chain:null,busy:false,message});paintWallet();
+      }
+      function walletDisconnected(){detachWallet('Wallet disconnected. Reconnect to try again.');}
+      function walletChanged(){if(wallet.provider)refreshWallet();}
+      function walletError(error){return error?.code===4001?'Wallet request rejected. Nothing was signed or changed.':error?.code===4902?'Monad is not configured in this wallet. Add Monad mainnet (143) in your wallet, then reconnect.':error?.code===4900?'Wallet is offline or disconnected. Reconnect to try again.':'Wallet or network check failed. Retry in your wallet; NFT ownership remains unverified.';}
+      async function refreshWallet(){
+        const provider=wallet.provider;if(!provider)return;const generation=++wallet.generation;
+        Object.assign(wallet,{address:null,chain:null,busy:true,message:'Checking wallet address and network…'});paintWallet();
+        try {
+          const accounts=await provider.request({method:'eth_accounts'}),chain=await provider.request({method:'eth_chainId'});
+          if(generation!==wallet.generation)return;
+          if(!Array.isArray(accounts)||!accounts.length){detachWallet('No account is connected. Unlock your wallet and connect again.');return;}
+          if(typeof accounts[0]!=='string'||!/^0x[0-9a-f]{40}$/i.test(accounts[0])||typeof chain!=='string'||!/^0x[0-9a-f]+$/i.test(chain))throw Error('Invalid wallet response');
+          wallet.address=accounts[0];wallet.chain='0x'+BigInt(chain).toString(16);
+          if(wallet.chain!=='0x8f'){wallet.message='Wrong network. Switch to Monad to run the read-only compatibility check. No ownership result is retained.';return;}
+          if(!sharedUser){wallet.message='Wallet connected, not authenticated. Sign in to a court account, then recheck NFT compatibility. No NFT ownership has been verified.';return;}
+          wallet.message='Reading Monad contract compatibility. This cannot grant jury eligibility.';paintWallet();
+          let result;try{result=await requestAPI('/api/wallet/inspect',{method:'POST',body:{address:wallet.address}});}catch(error){if(generation===wallet.generation)wallet.message=error.message;return;}
+          if(generation===wallet.generation)wallet.message=`${result.message} Read-only observation at block ${result.blockNumber}. No wallet signature or ownership proof was obtained.`;
+        }catch(error){if(generation===wallet.generation){wallet.address=null;wallet.chain=null;wallet.message=walletError(error);}}
+        finally{if(generation===wallet.generation){wallet.busy=false;paintWallet();}}
+      }
+      content.addEventListener('click',async event=>{
+        const action=event.target.closest('[data-wallet]')?.dataset.wallet;if(!action)return;
+        if(action==='disconnect'){detachWallet();return;}
+        if(wallet.busy)return;
+        if(action==='inspect'){await refreshWallet();return;}
+        if(action==='switch'){
+          const generation=++wallet.generation;wallet.busy=true;paintWallet();
+          try{await wallet.provider.request({method:'wallet_switchEthereumChain',params:[{chainId:'0x8f'}]});if(generation===wallet.generation)await refreshWallet();}
+          catch(error){if(generation===wallet.generation)wallet.message=walletError(error);}
+          finally{if(generation===wallet.generation){wallet.busy=false;paintWallet();}}return;
+        }
+        const provider=window.ethereum;
+        if(!provider||typeof provider.request!=='function'){wallet.message='No browser wallet found. Open this page in a compatible wallet browser or install an EIP-1193 browser wallet. Court accounts still work without one.';paintWallet();return;}
+        const generation=++wallet.generation;wallet.provider=provider;wallet.busy=true;wallet.message='Approve the account connection in your wallet. No signing or spending request.';paintWallet();
+        try{
+          await provider.request({method:'eth_requestAccounts'});if(generation!==wallet.generation)return;
+          provider.on?.('accountsChanged',walletChanged);provider.on?.('chainChanged',walletChanged);provider.on?.('disconnect',walletDisconnected);await refreshWallet();
+        }catch(error){if(generation===wallet.generation)detachWallet(walletError(error));}
+      });
       function liveBar(){return `${sharedConfig?.daily?.demo?'<p class="preview-note" data-demo-notice><strong>LOCAL DEMO · temporary records · 60-second daily trials</strong><br>No production data, verified identities, or blockchain activity. Community Court keeps its normal deadlines.</p>':''}<div class="live-bar"><strong>${sharedConfig?.daily?.demo?'LOCAL DEMO / OFF-CHAIN RECORDS':'SHARED COURT / OFF-CHAIN RECORDS'}</strong><a href="#account">${sharedUser?escapeHTML(sharedUser.username):'Sign in / register'}</a><button data-court-mode="practice">Local practice examples</button></div>${featureNav()}`;}
       function liveNote(){return `<p class="preview-note">Jury policy: ${sharedConfig?.juryPolicy==='account'?'active signed-in court accounts, excluding the plaintiff and defendant. One vote per account. This does not verify unique humans or NFT ownership.':'verified NFT holders; unavailable until verification is configured.'} Cases and votes are stored on the server. No blockchain transaction is made.</p>`;}
       function dateLabel(value){return value?new Date(value).toLocaleString(undefined,{timeZone:'UTC'})+' UTC':'Not started';}
@@ -1264,6 +1313,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
             if(view==='verdict'&&(caseId||sharedCaseId)){const c=await requestAPI('/api/claims/'+encodeURIComponent(caseId||sharedCaseId));renderedCase=c;markup+=sharedVerdictCard(c);}
             else markup+=liveNote()+`${view==='search'?'<label class="field">Find a hearing<input id="shared-search" type="search" placeholder="Search these shared cases"></label>':''}<div id="shared-case-list">${cases.map(liveCaseLink).join('')||'<p class="empty">No '+(['verdict','rulings'].includes(view)?'finalized':'shared')+' cases here yet.</p>'}</div><div class="button-row">${sharedOffset?'<button class="action secondary" data-shared-page="previous">Previous cases</button>':''}${data.nextOffset!==null?'<button class="action secondary" data-shared-page="next">More cases</button>':''}<a class="action" href="#file-a-case">File a case</a></div>`;
           }
+          if(view==='account')markup+=walletPanel();
+          if(view==='reputation')markup+='<a class="action secondary" href="#account">Wallet connection / NFT status</a>';
           if(version===sharedRender&&dialog.open&&activeView===view){sharedCase=renderedCase;if(renderedCase)sharedCaseId=renderedCase.id;content.innerHTML=markup;if(view==='daily')updateDailyClock();$('.close-btn').focus({preventScroll:true});}
         }catch(error){if(version===sharedRender&&dialog.open&&activeView===view)content.innerHTML=`<p class="api-error" role="alert">${escapeHTML(error.message)}</p><button class="action" data-shared-refresh>Retry</button><div class="button-row"><button class="action secondary" data-court-mode="practice">Open separate local practice examples</button></div>`;}
       }
@@ -1298,7 +1349,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         if(!button.hasAttribute('data-shared-ready')&&!button.hasAttribute('data-shared-logout')&&!button.dataset.sharedVote)return;
         button.disabled=true;
         try {
-          if(button.hasAttribute('data-shared-logout')){await requestAPI('/api/auth/logout',{method:'POST',body:{}});sharedUser=null;csrf=null;openView('account');return;}
+          if(button.hasAttribute('data-shared-logout')){await requestAPI('/api/auth/logout',{method:'POST',body:{}});detachWallet();sharedUser=null;csrf=null;openView('account');return;}
           const route=button.dataset.sharedVote?'votes':'ready';await requestAPI(`/api/claims/${sharedCaseId}/${route}`,{method:'POST',body:route==='votes'?{choice:button.dataset.sharedVote}:{}});openView('case',sharedCaseId);
         }catch(error){sharedError(error);button.disabled=false;}
       });

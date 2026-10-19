@@ -9,7 +9,7 @@
     "dev": "node --env-file-if-exists=.env server/index.mjs",
     "start": "node --env-file-if-exists=.env server/index.mjs",
     "build": "node scripts/build.mjs",
-    "test": "node tests/backend.test.mjs",
+    "test": "node tests/backend.test.mjs && node tests/wallet.test.mjs",
     "test:frontend": "node tests/frontend.mjs",
     "test:browser": "node tests/application.mjs",
     "db:migrate": "node --env-file-if-exists=.env server/migrate.mjs"

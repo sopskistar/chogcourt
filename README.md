@@ -59,6 +59,14 @@ The demo refuses `NODE_ENV=production` or inherited `DATABASE_PATH`, `PUBLIC_ORI
 
 The default jury policy is explicitly **authenticated court accounts**, not verified NFT holders or one-human-one-vote. Multiple accounts remain a Sybil risk. For controlled testing, configure `REGISTRATION_CODE`. Set `JURY_POLICY=nft` only if you want voting to fail closed while NFT verification is unavailable.
 
+## Wallet connection and NFT blocker
+
+Open **Sign in / register → Chog NFT juror identity**. Connect an existing injected browser wallet, view its address, and switch to Monad if requested. Signed-in court users can run a read-only compatibility check against the owner-supplied address. Disconnect clears the page connection; it does not log out your court account. No signatures, transactions, keys, token purchases or API subscription are needed.
+
+The supplied `0x350035555e10d9afaf1566aaebfced5ba6c27777` is published as the **fungible $CHOG token**, not the NFT collection. Real public RPC returned Monad chain ID 143; the contract rejected ERC-721 support and returned 18 decimals. The UI reports this conflict and grants no NFT identity or eligibility. Connection is **not authentication or ownership**. A real wallet has not been manually tested; automated provider fixtures are labelled as tests.
+
+The meaningful proposed NFT feature is collection + token-ID juror identity with current-owner checks. It remains blocked until the correct official NFT collection and signed authentication are verified. **Do not claim the NFT-essential hackathon requirement is met yet.** Details, observations and required next steps: [BLOCKCHAIN.md](docs/BLOCKCHAIN.md).
+
 ## What is not enabled
 
 The official Chog website corroborates the $CHOG token address, and Monad's official docs corroborate mainnet chain ID 143. The NFT collection was not independently corroborated from an authoritative Chog source. Wallet authentication, NFT ownership, token balances, a holder balance threshold, and nomination selection policy remain unconfigured. The nomination UI and API clearly reject unavailable holder actions. No featured winner, ownership claim or blockchain confirmation is fabricated.

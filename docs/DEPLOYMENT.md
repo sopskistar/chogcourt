@@ -6,13 +6,31 @@ Repository inspection found no existing host configuration, no GitHub Pages site
 
 The implemented runtime is **Node.js 22.16+ with persistent SQLite**. It requires a continuously available writable persistent disk and a single application instance. It is not compatible with static-only GitHub Pages, ephemeral serverless filesystems, or the Sites/Cloudflare Worker runtime as-is. A Sites deployment would require a D1 storage adapter and platform authentication integration; do not upload this SQLite server there unchanged.
 
+## Vercel decision and shortest reliable submission path
+
+The finalization audit found no linked `.vercel/project.json`, `vercel.json`, remote database adapter or configured durable hosted database. GitHub authentication works; no GitHub deployment records or deployment checks were returned. No hosting change or deployment is authorized by this preparation step.
+
+**Do not import this as a working Vercel application yet.** The backend uses synchronous `node:sqlite`, local WAL files and SQLite transactions. [Vercel explicitly documents that its functions do not provide shared permanent local SQLite storage](https://vercel.com/kb/guide/is-sqlite-supported-in-vercel). Pointing `DATABASE_PATH` at `/tmp`, adding `DATABASE_URL`, or uploading `dist/` does not solve this: static HTML alone has no shared API, and the current code has no remote database adapter. Build/startup now refuse `VERCEL=1` to prevent a misleading or data-losing deployment.
+
+The smallest reliable alternative is the **existing single-instance Node/Docker service plus persistent disk**, following the configuration below. This preserves the architecture and needs no new DB service or wallet provider subscription. The owner must supply a compatible host account/target, a persistent disk, and approve any hosting cost and deployment. No paid resource has been provisioned. An already-owned persistent server is also suitable. Do not expose or publish `npm run demo`.
+
+If Vercel remains mandatory, stop at preparation: choose and approve a durable remote database, implement/test its asynchronous storage adapter and Vercel request handler, then configure credentials and deploy with separate approval. A Vercel proxy to a persistent Node backend is another possibility but still requires that backend host and tested same-origin cookies/CSRF routing. Neither option has been silently implemented; neither is an environment-only change.
+
+### Source delivery and owner actions
+
+1. Review `git status --short --branch` and the tested commits. Preserve Daily Docket commit `4756e86a696850a0f3cbdfc3a4e99cfd4ef16ce0`.
+2. Verify `git remote get-url origin` is `https://github.com/sopskistar/chogcourt.git`, then `git fetch origin`. Push only if `origin/main` is an ancestor of local `main`: `git merge-base --is-ancestor origin/main main` followed by `git push origin main:main`. Never force. If authentication fails, run `gh auth login --hostname github.com` locally; do not paste a token into chat.
+3. For the recommended host, connect that repo/branch and follow **Connect a Node/Docker host** below. Confirm durable storage and costs before deployment; keep auto-deploy off until approved. Do not connect Vercel to `main` and expect this backend to run.
+4. Configure the exact HTTPS `PUBLIC_ORIGIN`, persistent `DATABASE_PATH`, runtime values and optional invitation code in the host dashboard. For RPC diagnostics the default public URL is sufficient; no key is required. `.env.example` is a template, not production secrets.
+5. After explicit deployment approval, deploy once, run `/api/health` and the complete live checklist below, including persistence after restart. Until then there is **no verified live URL**. Local browser tests are not live deployment tests.
+
 ## Local use
 
 ```sh
 npm run dev
 ```
 
-Open `http://127.0.0.1:4173`. There are no npm dependencies to install. If another preview owns that port, stop that server first or select an unused port and matching `PUBLIC_ORIGIN` in `.env`. The server creates the SQLite file and applies migration 001 once. `npm run db:migrate` also applies/checks the schema explicitly. Never commit `.env`, database files, or production evidence.
+Open `http://127.0.0.1:4173`. There are no npm dependencies to install. If another preview owns that port, stop that server first or select an unused port and matching `PUBLIC_ORIGIN` in `.env`. The server creates the SQLite file and applies migrations 001 and 002 as needed. `npm run db:migrate` also applies/checks the schema explicitly. Never commit `.env`, database files, or production evidence.
 
 ## Connect a Node/Docker host
 
@@ -63,10 +81,11 @@ Use an ignored local `.env` (loaded by npm scripts) for local overrides, or the 
 | `EVIDENCE_SECONDS` | Evidence/response duration, default `86400` | Default available |
 | `VOTING_SECONDS` | Voting duration, default `86400` | Default available |
 | `REGISTRATION_CODE` | Optional private invitation code chosen by the owner; empty permits public registration | Optional; recommended for controlled testing |
+| `MONAD_RPC_URL` | Server-only HTTPS RPC; defaults to the public `https://rpc.monad.xyz`, no key needed for basic use. Obtain a private URL from a provider only if necessary; keep it in host secrets | Optional; read-only diagnostic only |
 | `NFT_COLLECTION_ADDRESS` | Reserved only: authoritative Chog NFT collection source still needed | Do not configure as trusted yet |
 | `CHOG_MIN_BALANCE` | Reserved only: holder eligibility and selection policy must be supplied by the owner | Do not invent a threshold |
 
-The last two variables do not enable any integration by themselves. Wallet authentication and read-only ownership/balance adapters remain unimplemented and fail closed. A compatible hosting target/account and its persistent-storage configuration must be supplied before deployment; none has been provisioned or purchased here.
+The last two variables do not enable any integration by themselves. Wallet connection and read-only contract compatibility diagnostics are implemented, but authenticated NFT ownership/balance gating remains unavailable. The owner-supplied NFT address conflicts with the official fungible-token reference; see [BLOCKCHAIN.md](BLOCKCHAIN.md). A compatible hosting target/account and its persistent-storage configuration must be supplied before deployment; none has been provisioned or purchased here.
 
 ## Daily Docket and local-only demonstration
 

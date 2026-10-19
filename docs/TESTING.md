@@ -1,5 +1,34 @@
 # Validation record
 
+## Wallet safety and deployment preparation — 2026-10-19
+
+The starting checkout was clean `main`, one commit ahead of `origin/main`, with Daily Docket commit `4756e86a696850a0f3cbdfc3a4e99cfd4ef16ce0` intact. No existing implementation was rebuilt. Checks ran sequentially:
+
+| Command/check | Actual final result |
+| --- | --- |
+| `npm test` | 27 passed, 0 failed: original 21 court/daily tests, then 6 wallet/deployment safety tests |
+| `npm run test:frontend` | 21 passed, 0 failed |
+| `npm run test:browser` | 26 passed, 0 failed (22 existing + 4 wallet checks) |
+| `npm run build` | Passed; validated Node/static artifact regenerated in ignored `dist/` |
+| `git diff --check` | Passed |
+| Read-only comparison against `4756e86` | Claims route block, daily module, court rules, database/migrations and demo runner unchanged |
+| Real public Monad RPC | HTTP 200, chain `0x8f` / 143; supplied reference rejects ERC-721 support, `decimals()` = 18 |
+| New inspector against real Monad RPC | `NOT_ERC721`, all ownership/authentication/eligibility/trust flags false; block `0x6d83250`, hash `0xc9d1f412b59112cdde907fc561ddb14eb571fcfa23434924004e80031ce8b427` |
+
+Browser report: `/tmp/chog-app-nizBg8/report.json` (26 checks, no uncaught exceptions). Frontend report: `/tmp/chogcourt-frontend-7ciwhj/report.json` (21 checks, no failed requests). These are temporary local artifacts, not public URLs.
+
+New backend coverage: exact read-only RPC methods/fixed contract/block reference, no fungible balance-to-NFT conversion, explicit fail-closed behavior even if a contract reports ERC-721 support, wrong chain, no contract code, malformed responses, rate limits, simulated transport/timeouts, credential-safe errors, authentication/CSRF/origin/input restrictions, no identity writes, and Vercel refusal before database access/build output. These deterministic tests use labelled RPC fixtures.
+
+New browser coverage uses an **injected test wallet**, not a real extension: missing provider, rejected connection, address display, wrong chain, switching chain, account/network changes, RPC failure, empty accounts, disconnect events, late-response cancellation, reload privacy, unchanged court login, keyboard focus, and light/purple panel contrast/overflow at 1440×900 and 390×844. It asserts that only account/network connection methods are requested—no signatures, approvals or transactions. Existing full-app coverage passes at 1440×900, 1280×800, 1024×768, 768×1024, 390×844, 360×800 and 844×390, with the original 21-configuration motion suite retained. Chromium only; Firefox, WebKit and physical devices were not tested.
+
+The Daily Docket browser test again waited a real 60 seconds using fresh temporary storage, separate accounts and real submitted votes, then checked the result and next trial. Other tests use in-memory or temporary databases. No normal/production database was opened or migrated, and no existing application server was restarted.
+
+Initial sandbox runs could not bind localhost (`EPERM`), and a read-only Git subprocess comparison was blocked. These were rerun with permission; the final complete runs passed. No application failure or assertion was hidden, skipped or weakened.
+
+The real inspector smoke used a zero-address placeholder **only as an untrusted diagnostic input**; it did not query that address's balance or establish any NFT ownership. A real wallet connection, wallet signature, NFT-holder action, Docker execution or live deployment was **not tested**. The NFT-essential requirement remains blocked by the collection-reference mismatch, as explained in [BLOCKCHAIN.md](BLOCKCHAIN.md). Deployment requires the approved persistent host described in [DEPLOYMENT.md](DEPLOYMENT.md).
+
+Changed-file manifest: `.env.example`, `.gitignore`, `README.md`, `docs/API.md`, `docs/BLOCKCHAIN.md`, `docs/DEPLOYMENT.md`, `docs/TESTING.md`, `index.html`, `package.json`, `scripts/build.mjs`, `server/app.mjs`, `server/index.mjs`, `tests/application.mjs`; added `server/wallet.mjs` and `tests/wallet.test.mjs`. No image/font, schema, court rule or Daily Docket implementation changes. No spending, smart-contract deployment or application deployment was performed.
+
 ## Daily Docket enhancement — 2026-10-19
 
 Final checks were run sequentially, with browser suites not competing for CPU:

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
+if(process.env.VERCEL==='1')throw Error('Deployment blocked: this SQLite application requires a persistent Node/Docker host. A Vercel static build would not provide the shared court API. See docs/DEPLOYMENT.md.');
 const root=resolve(import.meta.dirname,'..');
 const html=await fs.readFile(resolve(root,'index.html'),'utf8');
 for(const [,script]of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g))new Function(script);
