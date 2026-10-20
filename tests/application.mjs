@@ -65,6 +65,23 @@ try {
   } finally {await plaintiff.js(`document.documentElement.style.overflowY=${JSON.stringify(original)}`);}
  });
  await check('Independent browser sessions register and authenticate separate shared accounts',async()=>{await register(plaintiff,'plaintiff_browser');await register(defendant,'defendant_browser');await register(juror,'juror_browser');assert.ok((await plaintiff.js(`document.querySelector('.live-bar').textContent`)).includes('plaintiff_browser'));assert.ok((await defendant.js(`document.querySelector('.live-bar').textContent`)).includes('defendant_browser'));});
+ await check('New account shows real empty daily, verdict and reputation states without invented activity',async()=>{
+  await open(plaintiff,'daily');assert.ok((await plaintiff.js(`document.querySelector('#daily-current').textContent`)).includes('No daily question yet'));
+  await open(plaintiff,'verdict');assert.ok((await plaintiff.js(`document.querySelector('#shared-case-list').textContent`)).includes('No finalized cases'));assert.equal(await plaintiff.js(`!!document.querySelector('[data-live-verdict]')`),false);
+  await open(plaintiff,'reputation');assert.equal(await plaintiff.js(`document.querySelector('.stat strong').textContent`),'0');assert.equal(await plaintiff.js(`document.querySelectorAll('.badge[data-earned="true"]').length`),0);
+  assert.ok((await plaintiff.js(`document.querySelector('#dialog-body').textContent`)).includes('No daily participation yet'));assert.ok((await plaintiff.js(`document.querySelector('#dialog-body').textContent`)).includes('No case history yet'));
+ });
+ await check('Missing Daily route and incomplete responses show actionable errors, not fabricated empty records, and retry recovers',async()=>{
+  await plaintiff.js(`window.dailyTestFetch=window.fetch;window.dailyTestMode='legacy';window.fetch=async(...args)=>{if(new URL(args[0],location.href).pathname==='/api/daily')return window.dailyTestMode==='legacy'?new Response(JSON.stringify({error:{code:'NOT_FOUND',message:'API route not found.'}}),{status:404}):new Response(JSON.stringify({config:null,previous:null}));return window.dailyTestFetch(...args);}`);
+  try{
+   await plaintiff.js(`document.querySelector('#menu-panel a[href="#daily"]').click()`);
+   await plaintiff.until(`document.querySelector('.api-error')?.textContent.includes('GET /api/daily returned 404')`);
+   assert.ok((await plaintiff.js(`document.querySelector('.api-error').textContent`)).includes('Restart or update'));assert.equal(await plaintiff.js(`!!document.querySelector('#daily-current,[data-daily-result]')`),false);
+   await plaintiff.js(`window.dailyTestMode='incomplete';document.querySelector('[data-shared-refresh]').click()`);
+   await plaintiff.until(`document.querySelector('.api-error')?.textContent.includes('Daily Docket data is incomplete')`);
+  }finally{await plaintiff.js(`window.fetch=window.dailyTestFetch;delete window.dailyTestFetch;delete window.dailyTestMode;`);}
+  await plaintiff.js(`document.querySelector('[data-shared-refresh]').click()`);await plaintiff.until(`!!document.querySelector('#daily-current')`);
+ });
  await check('Wallet UI handles missing provider and rejection; injected test wallet connects without signing',async()=>{
   await open(juror,'account');await juror.js(`document.querySelector('[data-wallet="connect"]').click()`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('No browser wallet')`);
   await juror.js(`window.walletFixture={address:'0x'+'a'.repeat(40),chain:'0x1',reject:true,calls:[],handlers:{}};window.ethereum={request:async q=>{const w=window.walletFixture;w.calls.push(q);if(q.method==='eth_requestAccounts'){if(w.reject)throw {code:4001};return [w.address]}if(q.method==='eth_accounts')return w.address?[w.address]:[];if(q.method==='eth_chainId')return w.chain;if(q.method==='wallet_switchEthereumChain'){w.chain=q.params[0].chainId;return null}throw Error('Forbidden or unexpected wallet method')},on:(e,f)=>window.walletFixture.handlers[e]=f,removeListener:(e,f)=>{if(window.walletFixture.handlers[e]===f)delete window.walletFixture.handlers[e]}};document.querySelector('[data-wallet="connect"]').click()`);
@@ -132,6 +149,39 @@ try {
   await open(juror,'case',caseId);await juror.js(`document.querySelector('[data-shared-vote="INNOCENT"]').click()`);await juror.until(`document.querySelector('#dialog-body').textContent.includes('Your recorded vote: INNOCENT')`);assert.equal(await juror.js(`document.querySelectorAll('[data-shared-vote]').length`),0);
   await open(juror,'reputation');assert.equal(await juror.js(`document.querySelector('.stat strong').textContent`),'1');assert.equal(await juror.js(`document.querySelectorAll('.badge[data-earned="true"]').length`),1);await open(juror,'daily');assert.ok((await juror.js(`document.querySelector('#dialog-body').textContent`)).includes('Did the Chog leave the gavel'));
  });
+ await check('Reputation preserves real records with legacy history omissions and handles loading, partial, null and failed API responses',async()=>{
+  await juror.js(`window.profileTestFetch=window.fetch;window.profileTestMode='loading';window.fetch=async(...args)=>{
+   const response=await window.profileTestFetch(...args);if(new URL(args[0],location.href).pathname!=='/api/profile')return response;
+   if(window.profileTestMode==='loading')await new Promise(resolve=>window.releaseProfileTest=resolve);
+   const data=await response.json();
+   if(window.profileTestMode==='legacy'){delete data.dailyHistory;data.identity={verified:false,tokenKey:null};}
+   if(window.profileTestMode==='partial'){data.dailyHistory=null;data.stats=null;data.cases=null;delete data.identity;}
+   if(window.profileTestMode==='null')return new Response('null');
+   if(window.profileTestMode==='error')return new Response(JSON.stringify({error:{code:'TEST_OUTAGE',message:'Profile temporarily unavailable (test fixture).'}}),{status:503});
+   return new Response(JSON.stringify(data),{status:response.status});
+  };document.querySelector('#menu-panel a[href="#reputation"]').click()`);
+  try{
+   await juror.until(`!!window.releaseProfileTest`);assert.ok((await juror.js(`document.querySelector('#dialog-body [role="status"]').textContent`)).includes('Opening the shared court'));assert.equal(await juror.js(`!!document.querySelector('.stat')`),false);
+   await juror.js(`window.profileTestMode='legacy';window.releaseProfileTest()`);
+   await juror.until(`!!document.querySelector('[data-profile-unavailable]')`);
+   assert.ok((await juror.js(`document.querySelector('[data-profile-unavailable]').textContent`)).includes('Daily Docket history'));
+   assert.equal(await juror.js(`document.querySelector('.stat strong').textContent`),'1');
+   assert.equal(await juror.js(`document.querySelectorAll('.badge[data-earned="true"]').length`),1);
+   assert.equal(await juror.js(`document.querySelector('[data-shared-case]').dataset.sharedCase`),caseId);
+   assert.ok(!(await juror.js(`document.querySelector('#dialog-body').textContent`)).includes('No daily participation yet'));
+   await juror.js(`window.profileTestMode='partial';document.querySelector('[data-shared-refresh]').click()`);
+   await juror.until(`document.querySelectorAll('[data-profile-unavailable]').length===4`);
+   assert.equal(await juror.js(`!!document.querySelector('.stat,.badge,[data-shared-case]')`),false);
+   assert.ok((await juror.js(`document.querySelector('#dialog-body').textContent`)).includes('Score unavailable'));
+   await juror.js(`window.profileTestMode='null';document.querySelector('[data-shared-refresh]').click()`);
+   await juror.until(`document.querySelector('.api-error')?.textContent.includes('invalid response')`);
+   await juror.js(`window.profileTestMode='error';document.querySelector('[data-shared-refresh]').click()`);
+   await juror.until(`document.querySelector('.api-error')?.textContent.includes('Profile temporarily unavailable')`);
+   assert.equal(await juror.js(`!!document.querySelector('.stat')`),false);
+  }finally{await juror.js(`window.releaseProfileTest?.();window.fetch=window.profileTestFetch;delete window.profileTestFetch;delete window.profileTestMode;delete window.releaseProfileTest;`);}
+  await juror.js(`document.querySelector('[data-shared-refresh]').click()`);await juror.until(`!!document.querySelector('.stat')`);
+  assert.equal(await juror.js(`document.querySelector('.stat strong').textContent`),'1');assert.equal(await juror.js(`!!document.querySelector('[data-profile-unavailable]')`),false);
+ });
  await check('Additional separate jurors finalize a real stored outcome only after the deadline',async()=>{
   for(const name of ['second_juror','third_juror']){const p=await readyPage();await register(p,name);await open(p,'case',caseId);await p.js(`document.querySelector('[data-shared-vote="INNOCENT"]').click()`);await p.until(`document.querySelector('#dialog-body').textContent.includes('Your recorded vote')`);}
   await open(plaintiff,'verdict',caseId);assert.equal(await plaintiff.js(`!!document.querySelector('.verdict-stamp')`),false);time+=3601000;await open(plaintiff,'case',caseId);assert.equal(await plaintiff.js(`document.querySelector('.verdict-stamp').textContent`),'INNOCENT');assert.ok((await plaintiff.js(`document.querySelector('[data-live-verdict]').textContent`)).includes('3 server-accepted'));
@@ -143,6 +193,14 @@ try {
   assert.ok(svg?.includes('INNOCENT')&&svg.includes('SHARED OFF-CHAIN RECORD')&&svg.includes('data:font/woff2;base64,'));
   assert.equal(await plaintiff.js(`new DOMParser().parseFromString(${JSON.stringify(svg)},'image/svg+xml').querySelector('parsererror')===null`),true);
   await plaintiff.js(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:()=>Promise.reject(Error('denied'))}});document.querySelector('[data-shared-copy]').click()`);await plaintiff.until(`!!document.querySelector('.api-error')`);assert.ok((await plaintiff.js(`document.querySelector('.api-error').textContent`)).includes('#case/'+caseId));
+ });
+ await check('Finalized case appears consistently in docket, verdict listings, Verdict Machine and participant reputation',async()=>{
+  for(const view of ['docket','rulings','reputation']){
+   await open(juror,view);
+   assert.equal(await juror.js(`document.querySelector('[data-shared-case="${caseId}"]').dataset.sharedCase`),caseId);
+   assert.ok((await juror.js(`document.querySelector('[data-shared-case="${caseId}"]').textContent`)).includes('Finalized: INNOCENT'));
+  }
+  await open(juror,'verdict',caseId);assert.equal(await juror.js(`document.querySelector('[data-live-verdict] .verdict-stamp').textContent`),'INNOCENT');
  });
  await check('Refresh and a new login retain case history and actual participation',async()=>{
   await juror.call('Page.navigate',{url:base+'/#case/'+caseId});await juror.until(`!!document.querySelector('[data-live-verdict]')`);await reload(juror);await juror.until(`!!document.querySelector('[data-live-verdict]')`);assert.equal(await juror.js(`document.querySelector('.verdict-stamp').textContent`),'INNOCENT');

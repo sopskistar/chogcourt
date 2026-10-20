@@ -1,5 +1,35 @@
 # Validation record
 
+## Local feature errors and stale backend — 2026-10-20
+
+Started from clean `main` at `be1311d77f65512c9a5d58392605b8cbe53d4a92`. The actual development process on `127.0.0.1:4173` was still serving the schema-1 backend: `/api/daily` returned 404, `/api/config` lacked `daily`, and the old profile contract lacked `dailyHistory`. The server serves current HTML from disk but imports backend modules only at startup. Current source already registers the correct routes; no duplicate route, court-rule change or backend rewrite was needed.
+
+Fixed the frontend's unconditional history `.length` access. Missing/invalid profile sections now produce explicit unavailable/retry states, preserve valid statistics and case records, and are not presented as empty history or zero activity. Missing Daily Docket routes and incomplete responses have actionable errors. Loading, genuine empty records and API failures remain distinct.
+
+Sequential checks:
+
+| Executed check | Result |
+| --- | --- |
+| `npm test` | **36 passed, 0 failed** (22 court/daily + 14 wallet/safety) |
+| `npm run test:frontend` | **21 passed, 0 failed** |
+| `npm run test:browser` | **32 passed, 0 failed**, zero uncaught JavaScript exceptions |
+| `npm run build` | Passed |
+| `git diff --check` | Passed |
+| Actual local API/browser smoke after restart | Passed: schema 3; Daily Docket 200; unauthenticated profile 401; disabled nominations; Daily Docket, Reputation, Verdict Machine, Case of the Day and Account rendered correctly |
+| Local SQLite backup/migration comparison | Integrity check passed; every pre-existing non-migration table's rows matched the backup exactly |
+
+Reports: `/tmp/chogcourt-frontend-dl7fqF/report.json` and `/tmp/chog-app-13xRyW/report.json`. Chromium coverage includes both themes at 1440×900, 1280×800, 1024×768, 768×1024, 390×844, 360×800 and 844×390, plus the existing 21-configuration motion suite. Firefox, WebKit and physical devices were not tested.
+
+The complete browser journey registered separate accounts, filed a real test-database case, hashed evidence, rejected duplicate evidence, submitted the defendant response, recorded three eligible jury votes, finalized after the test deadline, and checked the same result in the docket, verdict listings, Verdict Machine and reputation. Refresh/new-login persistence, SVG export, gallery and navigation also passed. Community Court uses a temporary database and injected test clock; the separate Daily Docket demo waited an actual 60 seconds. No test accounts, cases, evidence, votes or verdicts were inserted into the normal database. Legacy/malformed-response tests intercept fetch only inside the test browser; wallet tests use labelled RPC fixtures and real cryptographic test signatures, not real user ownership.
+
+Before restarting the confirmed **local development** process, a consistent SQLite online backup was made at `data/before-feature-fix-YebBxK/court.sqlite` (ignored, private permissions, integrity checked). Existing additive migrations 002/003 were then applied by normal startup. The original one user and one session were preserved, and all existing court-record tables remained empty. Normal 86400-second evidence/voting windows, quorum 3 and account jury policy were verified unchanged. The local server is available on port 4173; reload the browser to use it.
+
+An attempted development-only watch-mode enhancement failed its actual startup check: Node 22.23.1 tried to watch the absent optional `.env` and raised `ENOENT`. That enhancement was removed, restoring the original working `npm run dev` command; no `.env` was invented or required. Documentation explicitly instructs restarting the local backend after backend updates. An initial process-stop safety guard rejected the command shape and took no action; the exact process arguments were inspected before stopping only the verified stale development process.
+
+Case of the Day still requires implementation of `$CHOG` eligibility/nomination policy and checks; Genesis identity verification does not enable it. The current Genesis wallet integration exists, but no real wallet extension, user signature or live RPC ownership check was performed in this repair. No deployment, production restart/settings change, blockchain transaction or court-rule change occurred.
+
+Changed files: `index.html`, `tests/application.mjs`, `tests/backend.test.mjs`, `README.md`, `docs/DEPLOYMENT.md`, and `docs/TESTING.md`. Server code, migrations, package commands, artwork, fonts and animation settings are unchanged.
+
 ## Free-hosting audit and pre-push verification — 2026-10-20
 
 Inspected the existing uncommitted wallet implementation on `main` at `1519810`; Daily Docket commit `4756e86a696850a0f3cbdfc3a4e99cfd4ef16ce0` remains an ancestor. A fresh fetch showed local/remote `main` equal before the new commit. GitHub reported push permission, no deployments, no checks/status integrations and no repository webhooks. No local Vercel link/config, workflow, `.env`/`.env.local`, or runtime hosting/database configuration was present. No hosting account, database migration, normal server restart, production setting or deployment was performed.

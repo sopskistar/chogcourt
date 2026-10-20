@@ -83,6 +83,21 @@ npm run dev
 
 Open `http://127.0.0.1:4173`. There are no npm dependencies to install; the server-side signature library is vendored with its licenses. If another preview owns that port, stop that server first or select an unused port and matching `PUBLIC_ORIGIN` in `.env`. The server creates the SQLite file and applies migrations 001–003 as needed. `npm run db:migrate` also applies/checks the schema explicitly. Never commit `.env`, database files, or production evidence.
 
+### Local feature troubleshooting
+
+`npm run dev` and `npm start` load backend modules at startup; neither automatically restarts after backend edits or a Git pull. The server reads `index.html` from disk on each request. An old Node process can therefore serve the newest UI with old routes/response fields. Restart the local process after backend updates, not just the browser.
+
+| Symptom | Confirmed cause / action |
+| --- | --- |
+| Daily Docket: `API route not found` | An old backend without `GET /api/daily`. Current code registers GET/POST and item/vote routes in `server/app.mjs`; no alternate path is required. Check `/api/health` (current schema 3) and `/api/config` (must include `daily`). Back up and restart the local backend, then reload. |
+| Reputation: undefined `length` | Schema-1-era `/api/profile` lacks `dailyHistory`; the UI previously read `items.length` unconditionally. Missing/invalid profile sections now show explicit unavailable/retry states while retaining valid returned data. Only a real `[]` is shown as empty history. |
+| Case of the Day unavailable | Intentional: `$CHOG` eligibility/nomination logic and its policy are not implemented. Genesis signed-wallet identity is separate. No environment variable, hosting deployment or NFT purchase enables nominations by itself. |
+| No finalized cases | Valid if no case has reached its voting deadline. Registration and filing do not create a verdict. Both parties may close evidence early, but the full configured voting period still applies. Default quorum is 3; refresh after the deadline. |
+
+For a **local** stale server: identify its process and project directory, confirm it is not production, take a consistent SQLite online backup (or stop it before copying all database state), stop only that process, then run `npm run dev` from this checkout and reload the browser. Do not delete the database, run two writers on different code versions, or change normal court deadlines to make the screen populate. Current startup applies additive migrations and retains existing records.
+
+No hosting credentials or RPC key are needed for Daily Docket or account reputation locally. A public deployment still needs the persistent Node host described above. Real wallet ownership requires the explicit signed-message/live-RPC flow in [BLOCKCHAIN.md](BLOCKCHAIN.md), not a connected wallet alone.
+
 ## Connect a Node/Docker host
 
 1. Connect `sopskistar/chogcourt`, branch `main`, as a Node 22.16+ service or use the included `Dockerfile`.

@@ -37,6 +37,19 @@ test('Authentication, session privacy, invalid login, CSRF and cross-origin reje
   assert.equal((await f.call('/api/auth/me',{actor:f.plaintiff})).data.user,null);
  }finally{f.close();}
 });
+test('Daily and profile route contracts include explicit empty histories and unverified identity for a new account',async()=>{
+ const f=await fixture();try{
+  assert.equal((await f.call('/api/health')).data.schema,3);
+  const daily=await f.call('/api/daily',{actor:f.plaintiff});assert.equal(daily.status,200);
+  assert.equal(daily.data.current,null);assert.equal(daily.data.next,null);assert.deepEqual(daily.data.previous,[]);assert.deepEqual(daily.data.history,[]);assert.equal(daily.data.config.windowSeconds,86400);
+  assert.equal((await f.call('/api/daily',{method:'POST'})).status,401);
+  assert.equal((await f.call('/api/profile')).status,401);
+  const profile=await f.call('/api/profile',{actor:f.plaintiff});assert.equal(profile.status,200);
+  assert.deepEqual(profile.data.cases,[]);assert.deepEqual(profile.data.dailyHistory,[]);assert.equal(profile.data.stats.votes,0);assert.equal(profile.data.stats.score,0);assert.deepEqual(profile.data.stats.badges,[false,false,false]);
+  assert.equal(profile.data.identity.verified,false);assert.equal(profile.data.identity.wallet.walletAuthenticated,false);
+  const nominations=await f.call('/api/nominations');assert.equal(nominations.data.enabled,false);assert.equal(nominations.data.chain.walletVerification,true);assert.equal(nominations.data.chain.nominationEnabled,false);
+ }finally{f.close();}
+});
 test('Shared case creation/retrieval, validation, no forged identities or client verdicts',async()=>{
  const f=await fixture();try{const c=await f.claim();assert.equal(c.state,'OPEN');assert.equal(c.verdict,null);assert.equal((await f.call('/api/claims/'+c.id,{actor:f.defendant})).data.id,c.id);assert.equal((await f.call('/api/claims')).data.cases.length,1);
  const base={title:'A valid court question?',category:'Community',argument:'This argument is long enough to be submitted.',defendant:'defendant'};

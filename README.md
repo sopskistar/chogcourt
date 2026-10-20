@@ -14,6 +14,8 @@ npm run dev
 
 Open http://127.0.0.1:4173. The server creates `data/chogcourt.sqlite` and applies the versioned schema. Optional settings are documented in `.env.example`; copy desired settings into an untracked `.env`. Do not put secrets or databases in Git.
 
+Restart `npm run dev` after backend changes; it does not watch server modules. Stop an older local process before starting dev on the same port. If `/api/health` reports schema 1 or 2 while this checkout expects 3, back up the database and restart the local backend; refreshing the browser alone cannot load new server routes. See [local troubleshooting](docs/DEPLOYMENT.md#local-feature-troubleshooting).
+
 The old static preview still works with `python3 -m http.server 4173 --bind 127.0.0.1`, but it intentionally exposes only the separate local-practice frontend. Use the Node server for shared accounts and records.
 
 ## Daily Docket: one complete repeat-use loop
