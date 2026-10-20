@@ -1,5 +1,53 @@
 # Validation record
 
+## Free-hosting audit and pre-push verification — 2026-10-20
+
+Inspected the existing uncommitted wallet implementation on `main` at `1519810`; Daily Docket commit `4756e86a696850a0f3cbdfc3a4e99cfd4ef16ce0` remains an ancestor. A fresh fetch showed local/remote `main` equal before the new commit. GitHub reported push permission, no deployments, no checks/status integrations and no repository webhooks. No local Vercel link/config, workflow, `.env`/`.env.local`, or runtime hosting/database configuration was present. No hosting account, database migration, normal server restart, production setting or deployment was performed.
+
+Final sequential verification:
+
+| Executed check | Result |
+| --- | --- |
+| `npm test` | **35 passed, 0 failed** (21 court/daily + 14 wallet/safety) |
+| `npm run test:frontend` | **21 passed, 0 failed** |
+| `npm run test:browser` | **28 passed, 0 failed**, zero uncaught JS exceptions |
+| `npm run build` | Passed |
+| `git diff --check` | Passed |
+| Built-artifact smoke | Vendored signature recovery, schema 3 in memory, and exclusion of `.env`, data and local-demo script passed |
+| Read-only committed comparison | Existing claims route block, daily module, court rules, schemas 001/002, demo runner, server runtime and Dockerfile unchanged |
+
+Reports: `/tmp/chogcourt-frontend-OfntcI/report.json` and `/tmp/chog-app-vIrLIj/report.json`. Browser coverage remains Chromium only, including both themes and 1440×900, 1280×800, 1024×768, 768×1024, 390×844, 360×800 and 844×390. The motion suite retains its 21 configurations. The application suite again completed the real-time 60-second local Daily Docket with separate accounts and fresh temporary storage. Real wallet extensions, Firefox, WebKit, physical devices and a hosted deployment were not tested. The earlier real Monad observation below was not rerun during this hosting audit; automated wallet ownership uses labelled RPC fixtures with real cryptographic test signatures.
+
+**Failure found and fixed, not skipped:** the first browser rerun stopped at the signed-wallet mobile resize (`/tmp/chog-app-MA2Trm/report.json`, five checks completed). Diagnostics showed `clientWidth=390` but `--s=375/1280`. A separate in-memory browser experiment reproduced a document scrollbar change from 1265 to 1280 pixels without a window `resize` event; the old scale stayed at 1265/1280. `index.html` now observes document-width changes and schedules the existing `fit()` formula. The added regression toggles document scrollbar visibility at a fixed window size and requires the correct scale. No timing, crop, entrance, font or existing assertion was weakened. All suites above were then rerun sequentially and passed. A sandbox-denied read-only Git subprocess comparison was rerun with permission and passed.
+
+Hosting findings and owner-only setup instructions are recorded in [DEPLOYMENT.md](DEPLOYMENT.md). Only `.env.example` comments changed; its values, court defaults and the database architecture were preserved. README's stale no-runtime-library statement was corrected to describe the vendored verifier. The staged whitespace check also caught redundant trailing blank lines in the two newly added license files; those blank lines were removed without changing license text. The code and tests were reviewed for source delivery; commit/push identifiers are reported separately after GitHub confirmation.
+
+## Signed wallets and Chog Genesis ownership — 2026-10-20
+
+Started from clean `main`; preserved Daily Docket commit `4756e86a696850a0f3cbdfc3a4e99cfd4ef16ce0`. No existing app was restarted and no normal/production database was opened. All database tests used memory or fresh temporary files. Suites were run sequentially.
+
+| Executed check | Final result |
+| --- | --- |
+| `npm test` | **35 passed, 0 failed**: 21 court/daily tests + 14 wallet/safety tests |
+| `npm run test:frontend` | **21 passed, 0 failed**, including the original motion/entrance suite |
+| `npm run test:browser` | **27 passed, 0 failed**, no uncaught JS exceptions; real 60-second demo included |
+| `npm run build` | Passed; ignored `dist/` includes the server-side verifier and schema 003 |
+| `git diff --check` | Passed |
+| Read-only committed-file comparison | Claims route block, court rules, daily module, schemas 001/002, demo runner, Dockerfile, `.env.example`, deployment documentation and embedded fonts unchanged |
+| New inspector against live public Monad RPC | Passed: chain 143, fixed collection, ERC-165/721, balance and `ownerOf(476)`, number-pinned reads with final block-hash check |
+
+Final reports: `/tmp/chogcourt-frontend-W4oL3w/report.json` and `/tmp/chog-app-9SKe2v/report.json`. These are local temporary artifacts, not deployed URLs. Chromium was used; Firefox/WebKit and physical devices were not tested. Full browser checks cover 1440×900, 1280×800, 1024×768, 768×1024, 390×844, 360×800 and 844×390 in both themes; frontend regression retains 21 device/viewport configurations. The new verified-wallet panel was also checked at 390×844 in both themes.
+
+Live RPC smoke: contract `0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763`, block `0x6dae0ce`, hash `0xb8f367f252f9194ee59baa84dd0205befa899beedde933709444739c83b8c885`. It read the public owner of token 476, then successfully observed that address holding 2 NFTs and owning token 476. No address was asserted to belong to the user, no signature was requested from that owner, and no token record was saved. The raw inspector correctly retained `walletAuthenticated:false` and `ownershipVerified:false`; authentication needs a valid signature. This was a real network read, not a mocked holder result.
+
+New automated coverage: real cryptographic signatures from disposable unfunded test keys; domain/message/signer mismatch; nonce/session binding, replay, expiry and rate limits; CSRF/origin restrictions; optional token IDs; no-holder/wrong-owner/nonexistent-token cases; chain/interface validation; malformed RPC, timeout, outage and changed-block failures; transfer rechecks and clearing stale observations; disconnect/logout during in-flight reads; one-hour expiry; SQLite persistence and additive v2→v3 upgrade without changing daily records. Browser signing uses an explicitly injected test provider and labelled RPC fixtures, never production mock ownership. Wallet rejection, signature success, token key in Reputation, transfer/nonholder results, outage and chain-change revocation are exercised through the real API/UI.
+
+Failures investigated: sandbox initially denied localhost binding (`EPERM`); reruns with permission passed. An application run timed out waiting for a new test page's mobile layout; diagnostics were added and viewport checks now foreground the page before resizing, retaining the original strict mode/scale and overflow assertions. A subsequent run reached the nomination screen and found changed wording no longer contained the original explicit unverified-balance text; the UI now preserves that warning while distinguishing verified NFT identity from unverified $CHOG balances. The final complete run passed; no assertions were removed or skipped.
+
+No real browser-wallet extension, hardware wallet, user signature, Docker execution or live deployment was tested. Follow [BLOCKCHAIN.md](BLOCKCHAIN.md) for the required human wallet test. NFT-gated jury voting, EIP-1271/QR wallets and $CHOG nominations remain unavailable; account court/Daily Docket behavior is unchanged. No hosting/production settings, contract deployment, spending, commit or push occurred.
+
+Changed files: `README.md`, `docs/API.md`, `docs/BLOCKCHAIN.md`, `docs/TESTING.md`, `index.html`, `server/app.mjs`, `server/database.mjs`, `server/wallet.mjs`, `tests/application.mjs`, `tests/backend.test.mjs`, `tests/wallet.test.mjs`. Added: `server/wallet-auth.mjs`, `server/migrations/003_wallet_auth.sql`, `server/vendor/ethers-6.17.0.mjs`, `server/vendor/LICENSE-ethers.md`, `server/vendor/THIRD-PARTY-LICENSES.md`, `server/vendor/README.md`. The pinned verifier's npm tarball integrity was checked before vendoring; no frontend library or npm install requirement was introduced.
+
 ## Wallet safety and deployment preparation — 2026-10-19
 
 The starting checkout was clean `main`, one commit ahead of `origin/main`, with Daily Docket commit `4756e86a696850a0f3cbdfc3a4e99cfd4ef16ce0` intact. No existing implementation was rebuilt. Checks ran sequentially:

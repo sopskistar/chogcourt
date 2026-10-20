@@ -643,7 +643,7 @@
       <nav aria-label="Community"><h3>Community</h3><a href="https://x.com/sopskistar" target="_blank" rel="noopener noreferrer">Creator X ↗</a><a href="https://github.com/sopskistar" target="_blank" rel="noopener noreferrer">Creator GitHub ↗</a><a href="https://github.com/sopskistar/chogcourt" target="_blank" rel="noopener noreferrer">Project repository ↗</a><a href="https://www.chog.xyz/" target="_blank" rel="noopener noreferrer">Official Chog website ↗</a><a href="https://x.com/ChogNFT" target="_blank" rel="noopener noreferrer">Official Chog X ↗</a><a href="https://discord.com/invite/chog" target="_blank" rel="noopener noreferrer">Chog Discord ↗</a></nav>
     </div>
     <div class="footer-bottom"><a href="https://x.com/sopskistar" target="_blank" rel="noopener noreferrer">Built by @sopskistar</a><a href="#home">Back to top ↑</a></div>
-    <p class="footer-disclaimer">Allegations are not findings. Shared off-chain court records, fictional demo data, and independently verified blockchain activity are different things. No wallet ownership is claimed by this application. Community verdicts are not legal judgments.</p>
+    <p class="footer-disclaimer">Allegations are not findings. Shared off-chain court records, fictional demo data, and independently verified blockchain activity are different things. NFT ownership is a timestamped, signed-wallet check when explicitly verified. Community verdicts are not legal judgments.</p>
   </footer>
   <dialog class="court-dialog" id="court-dialog" aria-labelledby="dialog-title">
     <div class="dialog-head"><div><span class="eyebrow">Chog Court / <span id="view-label">The docket</span></span><h2 id="dialog-title">The docket</h2></div><button class="close-btn" aria-label="Close panel"><svg aria-hidden="true"><use href="#icon-close"/></svg></button></div>
@@ -770,7 +770,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
       const header = $('.hdr'), menu = $('#menu-panel'), menuBtn = $('.menu-btn');
       const columns = $$('.col');
-      let resizeFrame = 0;
+      let resizeFrame = 0, fittedWidth = 0;
       function readMode() { return getComputedStyle(html).getPropertyValue('--mode').trim(); }
       function fit() {
         const mode = readMode();
@@ -779,6 +779,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         if (mode.startsWith('tab')) html.classList.add('tab');
         if (mode.startsWith('mob')) html.classList.add('mob');
         const vw = html.clientWidth, vh = window.innerHeight;
+        fittedWidth = vw;
         // Preserve the supplied reference scale formula, including tall canvases.
         const s = vw / vh > 1280 / 800 ? vh / 800 : vw / 1280;
         const W = vw / s, H = vh / s;
@@ -815,6 +816,11 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
       window.addEventListener('resize',scheduleFit,{passive:true});
       window.addEventListener('orientationchange',scheduleFit,{passive:true});
       fit();
+      // Scrollbar changes can resize the document without a window resize
+      // (including desktop-to-mobile emulation). Keep the same scale formula.
+      new ResizeObserver(() => {
+        if (html.clientWidth !== fittedWidth) scheduleFit();
+      }).observe(html);
 
       // One-shot entrance. The sampled quint easing is composed with linear
       // cruise motion: its last derivative matches the 14.6s CSS animation.
@@ -1203,41 +1209,80 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         if(!response.ok)throw Error(data.error?.message||'The court could not complete this request.');
         return data;
       }
-      // Wallet connection is session-only and never grants court authorization.
-      // No signatures, token transactions, balances, or ownership claims here.
-      const wallet={provider:null,address:null,chain:null,busy:false,message:'Connect an existing browser wallet. No signature, transaction, or payment is requested.',generation:0};
-      function walletPanel(){return `<section class="court-sheet" id="wallet-panel"><h3>Chog NFT juror identity</h3><p>Proposed role: a verified Chog token would identify an NFT juror across owner changes. <strong>Not enabled:</strong> the supplied collection address is published as the fungible $CHOG token. Account-based court and Daily Docket remain available.</p><p class="form-hint">Owner-supplied reference: <span class="evidence-hash">0x350035555e10d9afaf1566aaebfced5ba6c27777</span><br>Monad mainnet · chain ID 143. Connection alone does not prove control or NFT ownership. No wallet address is saved to your account.</p><div id="wallet-controls">${walletControls()}</div><p class="form-hint">An injected EIP-1193 wallet is required (browser extension or compatible wallet browser). QR/WalletConnect login is not implemented. Disconnect clears this page’s connection; revoke this site in your wallet to remove its permission.</p></section>`;}
-      function walletControls(){return `<p class="evidence-hash" data-wallet-address>${wallet.address?escapeHTML(wallet.address):'No wallet connected'}</p><p data-wallet-network>${wallet.chain?escapeHTML(wallet.chain==='0x8f'?'Monad / 143':'Unsupported network: '+wallet.chain):'Network not checked'}</p><p role="status" aria-live="polite" data-wallet-status>${escapeHTML(wallet.message)}</p><div class="button-row">${wallet.provider?`<button class="action secondary" data-wallet="disconnect">Disconnect wallet</button>${wallet.address?`<button class="action" data-wallet="${wallet.chain==='0x8f'?'inspect':'switch'}" ${wallet.busy?'disabled':''}>${wallet.chain==='0x8f'?'Recheck NFT compatibility':'Switch to Monad'}</button>`:''}`:`<button class="action" data-wallet="connect" ${wallet.busy?'disabled':''}>Connect wallet</button>`}</div><p class="form-hint">NFT ownership: not verified · NFT jury access: unavailable.</p>`;}
+      // Wallet authentication is separate from account-based court voting.
+      const wallet={provider:null,address:null,chain:null,busy:false,proof:null,tokenId:'',message:'Connect your wallet, then explicitly sign to verify Chog Genesis ownership. No transaction or payment.',generation:0,revocation:Promise.resolve()};
+      function walletPanel(){return `<section class="court-sheet" id="wallet-panel"><h3>Chog Genesis identity</h3><p>Authenticate your wallet and check the official NFT collection on Monad. Court and Daily Docket stay usable without an NFT; this identity does not change voting eligibility or your participation score.</p><p class="form-hint"><a href="https://opensea.io/collection/chog-genesis" target="_blank" rel="noopener noreferrer">Chog Genesis ↗</a> · Monad mainnet / 143<br><span class="evidence-hash">0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763</span></p><div id="wallet-controls">${walletControls()}</div><p class="form-hint">Use an injected EIP-1193 browser wallet. Smart-contract wallet signatures and QR/WalletConnect are not supported. A signature authenticates this court session for one hour; ownership is checked at the displayed block. Disconnect revokes this session’s authentication, not your wallet’s site permission. No private key, recovery phrase, approval, or transaction is requested.</p></section>`;}
+      function walletControls(){
+        const proof=wallet.proof,o=proof?.observation;
+        return `<p class="evidence-hash" data-wallet-address>${wallet.address?escapeHTML(wallet.address):'No wallet connected'}</p><p data-wallet-network>${wallet.chain?escapeHTML(wallet.chain==='0x8f'?'Monad / 143':'Unsupported network: '+wallet.chain):'Network not checked'}</p><p role="status" aria-live="polite" data-wallet-status>${escapeHTML(wallet.message)}</p>
+        ${wallet.address&&wallet.chain==='0x8f'?`<label class="field">Optional NFT token ID<input data-wallet-token inputmode="numeric" pattern="[0-9]*" maxlength="78" value="${escapeHTML(wallet.tokenId)}" placeholder="On-chain token ID, not the artwork’s name" ${wallet.busy?'disabled':''}></label><p class="form-hint">Leave blank to check whether you hold any Chog Genesis NFT. Supply the token ID from its OpenSea URL to verify a specific identity. Sign again after changing it.</p>`:''}
+        <div class="button-row">${wallet.provider?`<button class="action secondary" data-wallet="disconnect">Disconnect wallet</button>${wallet.address?`<button class="action secondary" data-wallet="${wallet.chain==='0x8f'?'inspect':'switch'}" ${wallet.busy?'disabled':''}>${wallet.chain==='0x8f'?'Recheck ownership':'Switch to Monad'}</button>${wallet.chain==='0x8f'&&sharedUser?`<button class="action" data-wallet="verify" ${wallet.busy?'disabled':''}>Sign &amp; verify NFT</button>`:''}`:''}`:`<button class="action" data-wallet="connect" ${wallet.busy?'disabled':''}>Connect wallet</button>`}</div>
+        <p class="form-hint" data-wallet-proof>NFT ownership: ${proof?.ownershipVerified?'verified at the recorded block':'not verified'} · ${proof?.walletAuthenticated?'Wallet signature authenticated':'Wallet not authenticated'}. Court voting remains account-based.</p>
+        ${o?`<dl class="config-list"><dt>Chog Genesis balance</dt><dd>${escapeHTML(o.balance)} NFTs at this block</dd><dt>Observation</dt><dd>${escapeHTML(o.checkedAt)} / ${escapeHTML(o.blockNumber)}</dd><dt>Session expires</dt><dd>${escapeHTML(proof.expiresAt)}</dd><dt>Token identity</dt><dd class="evidence-hash">${escapeHTML(proof.tokenKey||'No specific token verified')}</dd></dl><p class="form-hint">A transfer can invalidate ownership after this observation. Recheck before relying on it. Past account activity is not attributed to this NFT.</p>`:''}`;
+      }
+      content.addEventListener('input',event=>{if(event.target.matches('[data-wallet-token]'))wallet.tokenId=event.target.value;});
       function paintWallet(){const box=$('#wallet-controls');if(!box)return;const focused=box.contains(document.activeElement)?document.activeElement.dataset.wallet:null;box.innerHTML=walletControls();if(focused)box.querySelector(`[data-wallet="${focused}"]`)?.focus({preventScroll:true});}
+      function revokeWallet(){
+        wallet.proof=null;
+        if(!sharedUser)return Promise.resolve();
+        // Serialize revocations before any subsequent challenge can be issued.
+        wallet.revocation=wallet.revocation.catch(()=>{}).then(()=>requestAPI('/api/wallet/disconnect',{method:'POST',body:{}}));
+        return wallet.revocation;
+      }
       function detachWallet(message='Disconnected from this page. Court account and records are unchanged.'){
-        ++wallet.generation;for(const [event,fn]of [['accountsChanged',walletChanged],['chainChanged',walletChanged],['disconnect',walletDisconnected]])wallet.provider?.removeListener?.(event,fn);
-        Object.assign(wallet,{provider:null,address:null,chain:null,busy:false,message});paintWallet();
+        const generation=++wallet.generation;for(const [event,fn]of [['accountsChanged',walletChanged],['chainChanged',walletChanged],['disconnect',walletDisconnected]])wallet.provider?.removeListener?.(event,fn);
+        Object.assign(wallet,{provider:null,address:null,chain:null,busy:false,proof:null,tokenId:'',message});paintWallet();
+        revokeWallet().catch(()=>{if(generation===wallet.generation){wallet.message='Disconnected locally. Server revocation could not be confirmed; sign out or retry when online. Wallet authentication expires within one hour.';paintWallet();}});
       }
       function walletDisconnected(){detachWallet('Wallet disconnected. Reconnect to try again.');}
       function walletChanged(){if(wallet.provider)refreshWallet();}
-      function walletError(error){return error?.code===4001?'Wallet request rejected. Nothing was signed or changed.':error?.code===4902?'Monad is not configured in this wallet. Add Monad mainnet (143) in your wallet, then reconnect.':error?.code===4900?'Wallet is offline or disconnected. Reconnect to try again.':'Wallet or network check failed. Retry in your wallet; NFT ownership remains unverified.';}
+      function walletError(error){return error?.code===4001?'Wallet request rejected. No transaction was sent.':error?.code===4902?'Monad is not configured in this wallet. Add Monad mainnet (143) in your wallet, then reconnect.':error?.code===4900?'Wallet is offline or disconnected. Reconnect to try again.':error?.message||'Wallet or network check failed. Retry; NFT ownership remains unverified.';}
       async function refreshWallet(){
         const provider=wallet.provider;if(!provider)return;const generation=++wallet.generation;
-        Object.assign(wallet,{address:null,chain:null,busy:true,message:'Checking wallet address and network…'});paintWallet();
+        Object.assign(wallet,{address:null,chain:null,busy:true,proof:null,message:'Checking wallet address and network…'});paintWallet();
         try {
+          await revokeWallet();
           const accounts=await provider.request({method:'eth_accounts'}),chain=await provider.request({method:'eth_chainId'});
           if(generation!==wallet.generation)return;
           if(!Array.isArray(accounts)||!accounts.length){detachWallet('No account is connected. Unlock your wallet and connect again.');return;}
           if(typeof accounts[0]!=='string'||!/^0x[0-9a-f]{40}$/i.test(accounts[0])||typeof chain!=='string'||!/^0x[0-9a-f]+$/i.test(chain))throw Error('Invalid wallet response');
           wallet.address=accounts[0];wallet.chain='0x'+BigInt(chain).toString(16);
-          if(wallet.chain!=='0x8f'){wallet.message='Wrong network. Switch to Monad to run the read-only compatibility check. No ownership result is retained.';return;}
-          if(!sharedUser){wallet.message='Wallet connected, not authenticated. Sign in to a court account, then recheck NFT compatibility. No NFT ownership has been verified.';return;}
-          wallet.message='Reading Monad contract compatibility. This cannot grant jury eligibility.';paintWallet();
-          let result;try{result=await requestAPI('/api/wallet/inspect',{method:'POST',body:{address:wallet.address}});}catch(error){if(generation===wallet.generation)wallet.message=error.message;return;}
-          if(generation===wallet.generation)wallet.message=`${result.message} Read-only observation at block ${result.blockNumber}. No wallet signature or ownership proof was obtained.`;
-        }catch(error){if(generation===wallet.generation){wallet.address=null;wallet.chain=null;wallet.message=walletError(error);}}
+          if(wallet.chain!=='0x8f'){wallet.message='Wrong network. Switch to Monad. Previous wallet authentication has been revoked.';return;}
+          if(!sharedUser){wallet.message='Wallet connected, not authenticated. Sign in to a court account, then sign to verify ownership.';return;}
+          const result=await requestAPI('/api/wallet/inspect',{method:'POST',body:{address:wallet.address}});
+          if(generation===wallet.generation)wallet.message=`${result.message} Read-only observation at block ${result.blockNumber}. Sign & verify NFT to authenticate this wallet; connection alone is not proof.`;
+        }catch(error){if(generation===wallet.generation)wallet.message=walletError(error);}
+        finally{if(generation===wallet.generation){wallet.busy=false;paintWallet();}}
+      }
+      async function verifyWallet(recheck=false){
+        const provider=wallet.provider,address=wallet.address;if(!provider||!address||wallet.chain!=='0x8f'||!sharedUser)return;
+        const generation=++wallet.generation;wallet.busy=true;wallet.proof=null;wallet.message=recheck?'Rechecking live Monad ownership…':'Preparing a single-use sign-in message…';paintWallet();
+        try {
+          await wallet.revocation;
+          let result;
+          if(recheck)result=await requestAPI('/api/wallet/recheck',{method:'POST',body:{}});
+          else{
+            const challenge=await requestAPI('/api/wallet/challenge',{method:'POST',body:{address,chainId:143,tokenId:wallet.tokenId}});
+            if(generation!==wallet.generation)return;
+            wallet.message='Review the sign-in message in your wallet. It must show this site, Monad chain 143, and no transaction or approval.';paintWallet();
+            const hex='0x'+Array.from(new TextEncoder().encode(challenge.message),b=>b.toString(16).padStart(2,'0')).join('');
+            const signature=await provider.request({method:'personal_sign',params:[hex,address]});
+            if(generation!==wallet.generation)return;
+            const accounts=await provider.request({method:'eth_accounts'}),chain=await provider.request({method:'eth_chainId'});
+            if(accounts?.[0]?.toLowerCase()!==address.toLowerCase()||BigInt(chain)!==143n){await refreshWallet();return;}
+            wallet.message='Checking NFT ownership on Monad…';paintWallet();
+            result=await requestAPI('/api/wallet/verify',{method:'POST',body:{challengeId:challenge.challengeId,signature}});
+          }
+          if(generation===wallet.generation){wallet.proof=result;wallet.message=result.observation?.message||'Wallet authenticated; ownership not verified.';}
+        }catch(error){if(generation===wallet.generation)wallet.message=walletError(error);}
         finally{if(generation===wallet.generation){wallet.busy=false;paintWallet();}}
       }
       content.addEventListener('click',async event=>{
         const action=event.target.closest('[data-wallet]')?.dataset.wallet;if(!action)return;
         if(action==='disconnect'){detachWallet();return;}
         if(wallet.busy)return;
-        if(action==='inspect'){await refreshWallet();return;}
+        if(action==='verify'){await verifyWallet();return;}
+        if(action==='inspect'){if(wallet.proof?.walletAuthenticated)await verifyWallet(true);else await refreshWallet();return;}
         if(action==='switch'){
           const generation=++wallet.generation;wallet.busy=true;paintWallet();
           try{await wallet.provider.request({method:'wallet_switchEthereumChain',params:[{chainId:'0x8f'}]});if(generation===wallet.generation)await refreshWallet();}
@@ -1252,7 +1297,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           provider.on?.('accountsChanged',walletChanged);provider.on?.('chainChanged',walletChanged);provider.on?.('disconnect',walletDisconnected);await refreshWallet();
         }catch(error){if(generation===wallet.generation)detachWallet(walletError(error));}
       });
-      function liveBar(){return `${sharedConfig?.daily?.demo?'<p class="preview-note" data-demo-notice><strong>LOCAL DEMO · temporary records · 60-second daily trials</strong><br>No production data, verified identities, or blockchain activity. Community Court keeps its normal deadlines.</p>':''}<div class="live-bar"><strong>${sharedConfig?.daily?.demo?'LOCAL DEMO / OFF-CHAIN RECORDS':'SHARED COURT / OFF-CHAIN RECORDS'}</strong><a href="#account">${sharedUser?escapeHTML(sharedUser.username):'Sign in / register'}</a><button data-court-mode="practice">Local practice examples</button></div>${featureNav()}`;}
+      function liveBar(){return `${sharedConfig?.daily?.demo?'<p class="preview-note" data-demo-notice><strong>LOCAL DEMO · temporary records · 60-second daily trials</strong><br>Temporary off-chain records. Optional wallet checks read real Monad data. Community Court keeps its normal deadlines.</p>':''}<div class="live-bar"><strong>${sharedConfig?.daily?.demo?'LOCAL DEMO / OFF-CHAIN RECORDS':'SHARED COURT / OFF-CHAIN RECORDS'}</strong><a href="#account">${sharedUser?escapeHTML(sharedUser.username):'Sign in / register'}</a><button data-court-mode="practice">Local practice examples</button></div>${featureNav()}`;}
       function liveNote(){return `<p class="preview-note">Jury policy: ${sharedConfig?.juryPolicy==='account'?'active signed-in court accounts, excluding the plaintiff and defendant. One vote per account. This does not verify unique humans or NFT ownership.':'verified NFT holders; unavailable until verification is configured.'} Cases and votes are stored on the server. No blockchain transaction is made.</p>`;}
       function dateLabel(value){return value?new Date(value).toLocaleString(undefined,{timeZone:'UTC'})+' UTC':'Not started';}
       function liveCaseLink(c){return `<article class="case-card" data-shared-case="${escapeHTML(c.id)}"><div class="case-meta"><span>${escapeHTML(c.category)} / shared off-chain</span><span>${c.state.replaceAll('_',' / ')}</span></div><h3>${escapeHTML(c.title)}</h3><p>${escapeHTML(c.argument)}</p><div class="case-facts"><span>${escapeHTML(c.plaintiff)} vs ${escapeHTML(c.defendant)}</span><span>${c.jury_participation} eligible account vote(s)</span><span>${c.evidence_count} evidence item(s)</span></div><p class="form-hint">${c.state==='FINALIZED'?'Finalized: '+c.verdict.outcome.replaceAll('_',' '):'Deadline: '+dateLabel(c.state==='VOTING'?c.voting_deadline:c.response_deadline)}</p><button class="action" data-view="case" data-open-case="${c.id}">Open case record ↗</button></article>`;}
@@ -1304,9 +1349,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           } else if(view==='reputation'||view==='daily') {
             if(view==='daily')markup+=dailyDocket(await requestAPI('/api/daily'));
             else markup+=featureLead('reputation','Your court record.','Shared, server-recorded participation. No invented NFT ownership or balances.').replace(featureNav(),'');
-            if(sharedUser){const profile=await requestAPI('/api/profile');markup+=view==='daily'?`<details class="method"><summary>Your Community Court jury activity</summary>${liveStats(profile.stats)}</details>`:liveStats(profile.stats);if(view==='reputation')markup+=`<section class="court-sheet"><div class="identity-head"><img class="identity-avatar" src="assets/images/chog-official-pfp.png" alt="Official Chog identity artwork" width="80" height="80"><div><h3>${escapeHTML(sharedUser.username)}</h3><p>Court account · verified NFT identity unavailable</p></div></div><h3 class="sheet-title">${profile.stats.score} / 100</h3><p>Participation score. NFT collection, token ID, and ownership have not been verified.</p><p class="form-hint">Future verified token history uses network + collection address + token ID. Owner changes do not erase that history.</p></section>${dailyHistory(profile.dailyHistory)}<h3>Case history</h3>${profile.cases.map(c=>`<p class="form-hint">Role: ${c.plaintiff_id===sharedUser.id?'plaintiff':c.defendant_id===sharedUser.id?'defendant':'juror'} · ${c.verdict?'Finalized off-chain outcome':'Pending allegation · no final finding'}</p>${liveCaseLink(c)}`).join('')||'<p class="empty">No case history yet.</p>'}`;}else if(view==='reputation')markup+='<p class="preview-note">Sign in to see your actual activity and earned achievements.</p><a class="action" href="#account">Sign in / register</a>';
+            if(sharedUser){const profile=await requestAPI('/api/profile');markup+=view==='daily'?`<details class="method"><summary>Your Community Court jury activity</summary>${liveStats(profile.stats)}</details>`:liveStats(profile.stats);if(view==='reputation')markup+=`<section class="court-sheet"><div class="identity-head"><img class="identity-avatar" src="assets/images/chog-official-pfp.png" alt="Official Chog identity artwork" width="80" height="80"><div><h3>${escapeHTML(sharedUser.username)}</h3><p>Court account · ${profile.identity.verified?'verified token observation':'no verified token selected'}</p></div></div><h3 class="sheet-title">${profile.stats.score} / 100</h3><p>Account participation score; not an NFT reputation score.</p><p class="form-hint">${profile.identity.verified?'Token: '+escapeHTML(profile.identity.tokenKey)+' · observed '+escapeHTML(profile.identity.wallet.observation.checkedAt)+'. Recheck in Account after transfers.':'Verify a Chog Genesis identity in Account.'} Account activity is not retroactively attributed to the NFT.</p></section>${dailyHistory(profile.dailyHistory)}<h3>Case history</h3>${profile.cases.map(c=>`<p class="form-hint">Role: ${c.plaintiff_id===sharedUser.id?'plaintiff':c.defendant_id===sharedUser.id?'defendant':'juror'} · ${c.verdict?'Finalized off-chain outcome':'Pending allegation · no final finding'}</p>${liveCaseLink(c)}`).join('')||'<p class="empty">No case history yet.</p>'}`;}else if(view==='reputation')markup+='<p class="preview-note">Sign in to see your actual activity and earned achievements.</p><a class="action" href="#account">Sign in / register</a>';
             if(view==='daily'){const data=await requestAPI('/api/claims');markup+='<details class="method"><summary>Community Court hearings</summary>'+liveNote()+data.cases.map(liveCaseLink).join('')+(data.cases.length?'':'<p class="empty">No disputes filed. Daily questions remain available independently.</p>')+'</details>';}
-          } else if(view==='featured')markup+=featureLead('featured','A case worth hearing.','Holder nominations remain closed until eligibility can actually be verified.').replace(featureNav(),'')+`<section class="court-sheet"><span class="status-tag">Holder verification unavailable</span><dl class="config-list"><dt>Network</dt><dd>Monad / 143</dd><dt>Published $CHOG contract</dt><dd>${config.chain.tokenContract}</dd><dt>Official source</dt><dd><a href="https://www.chog.xyz/" target="_blank" rel="noopener noreferrer">chog.xyz ↗</a></dd><dt>NFT collection</dt><dd>Not verified</dd><dt>Minimum balance</dt><dd>No policy configured</dd><dt>Wallet / balance</dt><dd>Not verified or checked</dd><dt>Record type</dt><dd>Off-chain nomination; unavailable until checks are enabled</dd></dl><p class="dialog-intro">No nomination has been accepted. No featured winner or holder eligibility is invented. No transfers, approvals, staking, or signatures are requested.</p><button class="action" disabled>Nomination awaiting verified integration</button></section>${conceptArt('featured')}`;
+          } else if(view==='featured')markup+=featureLead('featured','A case worth hearing.','Holder nominations remain closed until eligibility can actually be verified.').replace(featureNav(),'')+`<section class="court-sheet"><span class="status-tag">Holder verification unavailable</span><dl class="config-list"><dt>Network</dt><dd>Monad / 143</dd><dt>Published $CHOG contract</dt><dd>${config.chain.tokenContract}</dd><dt>Official source</dt><dd><a href="https://www.chog.xyz/" target="_blank" rel="noopener noreferrer">chog.xyz ↗</a></dd><dt>NFT collection</dt><dd>Chog Genesis · identity checks available in Account</dd><dt>Minimum balance</dt><dd>No policy configured</dd><dt>$CHOG token balance</dt><dd>Not verified or checked; NFT ownership does not establish token eligibility</dd><dt>Record type</dt><dd>Off-chain nomination; unavailable until checks are enabled</dd></dl><p class="dialog-intro">No nomination has been accepted. No featured winner or holder eligibility is invented. No transfers, approvals, staking, or signatures are requested.</p><button class="action" disabled>Nomination awaiting verified integration</button></section>${conceptArt('featured')}`;
           else {
             const data=await requestAPI('/api/claims?offset='+sharedOffset);let cases=data.cases;
             if(['verdict','rulings'].includes(view))cases=cases.filter(c=>c.state==='FINALIZED');
@@ -1349,7 +1394,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         if(!button.hasAttribute('data-shared-ready')&&!button.hasAttribute('data-shared-logout')&&!button.dataset.sharedVote)return;
         button.disabled=true;
         try {
-          if(button.hasAttribute('data-shared-logout')){await requestAPI('/api/auth/logout',{method:'POST',body:{}});detachWallet();sharedUser=null;csrf=null;openView('account');return;}
+          if(button.hasAttribute('data-shared-logout')){await requestAPI('/api/auth/logout',{method:'POST',body:{}});sharedUser=null;csrf=null;detachWallet();openView('account');return;}
           const route=button.dataset.sharedVote?'votes':'ready';await requestAPI(`/api/claims/${sharedCaseId}/${route}`,{method:'POST',body:route==='votes'?{choice:button.dataset.sharedVote}:{}});openView('case',sharedCaseId);
         }catch(error){sharedError(error);button.disabled=false;}
       });

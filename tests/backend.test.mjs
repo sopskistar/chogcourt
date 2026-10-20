@@ -7,7 +7,7 @@ import {get as httpGet} from 'node:http';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {openDatabase,openTemporaryDemoDatabase,isDemoDatabase} from '../server/database.mjs';
+import {openDatabase,openTemporaryDemoDatabase,isDemoDatabase,SCHEMA_VERSION} from '../server/database.mjs';
 import {createServer} from '../server/index.mjs';
 import {createApplication} from '../server/app.mjs';
 import {verdictFrom,participationStats,tokenKey,saveVerifiedToken} from '../server/rules.mjs';
@@ -89,7 +89,7 @@ test('Tie, insufficient quorum, insufficient-evidence plurality and innocent plu
  assert.equal(verdictFrom(votes('INNOCENT','INNOCENT','GUILTY'),3).outcome,'INNOCENT');
 });
 test('NFT-only jury policy and nominations fail closed without invented verification',async()=>{
- const f=await fixture({juryPolicy:'nft'});try{const c=await f.claim();await f.votePhase(c);assert.equal((await f.call(`/api/claims/${c.id}/votes`,{method:'POST',actor:f.juror,body:{choice:'GUILTY'}})).status,403);assert.equal((await f.call('/api/nominations',{method:'POST',actor:f.juror,body:{claimId:c.id}})).status,503);assert.equal((await f.call('/api/wallet/challenge',{method:'POST',actor:f.juror})).status,503);const config=(await f.call('/api/config')).data;assert.equal(config.chain.balanceVerified,false);assert.equal(config.chain.nominationThreshold,null);
+ const f=await fixture({juryPolicy:'nft'});try{const c=await f.claim();await f.votePhase(c);assert.equal((await f.call(`/api/claims/${c.id}/votes`,{method:'POST',actor:f.juror,body:{choice:'GUILTY'}})).status,403);assert.equal((await f.call('/api/nominations',{method:'POST',actor:f.juror,body:{claimId:c.id}})).status,503);assert.equal((await f.call('/api/wallet/challenge',{method:'POST',actor:f.juror})).status,422);const config=(await f.call('/api/config')).data;assert.equal(config.chain.nftJuryEnabled,false);assert.equal(config.chain.balanceVerified,false);assert.equal(config.chain.nominationThreshold,null);
  }finally{f.close();}
 });
 test('Real activity drives achievements, UTC streaks and activity score independently of verdicts',async()=>{
@@ -179,7 +179,7 @@ test('Daily plurality, ties, zero votes and insufficient participation use the d
 });
 
 test('Daily account participation remains available when the separate court NFT policy is disabled',async()=>{
- const f=await fixture({juryPolicy:'nft'});try{const t=await submitDaily(f);assert.equal((await f.call('/api/daily/'+t.id+'/votes',{method:'POST',actor:f.juror,body:{choice:0}})).status,201);assert.equal((await f.call('/api/config')).data.chain.walletVerification,false);}finally{f.close();}
+ const f=await fixture({juryPolicy:'nft'});try{const t=await submitDaily(f);assert.equal((await f.call('/api/daily/'+t.id+'/votes',{method:'POST',actor:f.juror,body:{choice:0}})).status,201);assert.equal((await f.call('/api/config')).data.chain.nftJuryEnabled,false);}finally{f.close();}
 });
 
 test('Daily FIFO skips missed dates without fabricating trials; claims and their rules are untouched',async()=>{
@@ -192,7 +192,7 @@ test('Daily FIFO skips missed dates without fabricating trials; claims and their
  }finally{f.close();}
 });
 
-test('Migration 002 preserves a populated v1 court and is idempotent on restart',async()=>{
+test('Additive migrations preserve a populated v1 court and are idempotent on restart',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'chog-upgrade-test-')),path=join(directory,'court.sqlite');
  let db=new DatabaseSync(path);
  try{
@@ -200,8 +200,8 @@ test('Migration 002 preserves a populated v1 court and is idempotent on restart'
   for(const id of ['a','b'])db.prepare('INSERT INTO users(id,username,password_hash,salt,created_at) VALUES(?,?,?,?,?)').run(id,id,'fixture','fixture','2026-10-13T00:00:00Z');
   db.prepare('INSERT INTO claims(id,title,category,argument,plaintiff_id,defendant_id,state,created_at,response_deadline,voting_seconds,min_quorum,jury_policy) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run('existing','Existing case','Community','Existing argument','a','b','OPEN','2026-10-13T00:00:00Z','2026-10-14T00:00:00Z',86400,3,'account');
   const before=db.prepare('SELECT * FROM claims').all();db.close();db=openDatabase(path);
-  assert.equal(db.prepare('SELECT max(version) AS n FROM migrations').get().n,2);assert.deepEqual(db.prepare('SELECT * FROM claims').all(),before);assert.equal(db.prepare('SELECT count(*) AS n FROM users').get().n,2);
-  db.close();db=openDatabase(path);assert.deepEqual(db.prepare('SELECT * FROM claims').all(),before);assert.equal(db.prepare('SELECT count(*) AS n FROM migrations').get().n,2);
+  assert.equal(db.prepare('SELECT max(version) AS n FROM migrations').get().n,SCHEMA_VERSION);assert.deepEqual(db.prepare('SELECT * FROM claims').all(),before);assert.equal(db.prepare('SELECT count(*) AS n FROM users').get().n,2);
+  db.close();db=openDatabase(path);assert.deepEqual(db.prepare('SELECT * FROM claims').all(),before);assert.equal(db.prepare('SELECT count(*) AS n FROM migrations').get().n,SCHEMA_VERSION);
  }finally{db.close();await rm(directory,{recursive:true,force:true});}
 });
 

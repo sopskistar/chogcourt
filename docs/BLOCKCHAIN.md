@@ -1,5 +1,33 @@
 # Blockchain verification status
 
+## Current implementation — 2026-10-20
+
+**Chog Genesis** is now allowlisted at `0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763` on Monad mainnet, chain ID **143**, RPC `https://rpc.monad.xyz`. The [official mint site](https://mint.chog.xyz/) links to [the collection](https://opensea.io/collection/chog-genesis); its [published configuration](https://mint.chog.xyz/_next/static/immutable/chunks/1ngh11k1abm9g.js) contains the same contract. The earlier `0x3500…7777` reference remains the fungible $CHOG token, never the NFT allowlist.
+
+### What works and what does not
+
+- Connect an injected EIP-1193 browser wallet; switch to Monad; explicitly sign a readable EIP-4361-format message using `personal_sign`. Server-side ethers 6.17.0 recovers the signer from the **server-stored** message, not a client-supplied message. Browser connection alone grants nothing.
+- Challenges bind origin/domain, court account session, address, chain, optional token ID, random 192-bit nonce and five-minute expiration. Only one challenge is active per session. It is consumed before verification/RPC; replay, another session, changed message and wrong signer are rejected. No signature is stored. Wallet authentication lasts one hour in the current court session, not as a new passwordless account login.
+- The server checks RPC chain ID, block reference, contract code, ERC-165/721, and `balanceOf(address)`. An optional decimal token ID additionally requires matching `ownerOf(tokenId)`. Reads use one block number and recheck its hash. Authentication is not an NFT claim unless reads succeed. Wrong network, timeouts, rate limits, malformed results and reverts fail closed.
+- Successful token-specific observations populate the existing token-keyed identity storage and appear in Reputation. Key: network + collection + token ID. This is an **as-of-block observation**, not an immutable guarantee of present ownership. Recheck makes live reads; transfers remove the old session's verified identity. Historical token records remain historical; account votes/history are not retroactively assigned to the NFT.
+- Disconnect, account/network changes, logout, or one-hour expiry invalidate wallet authentication. In-flight reads cannot recreate a disconnected session. Failed rechecks clear the current proof. If an offline browser cannot confirm revocation, it warns rather than claiming success; sign out/retry when online. Reload does not silently reconnect the extension; the server-side observation may remain in that court session until expiry/disconnect.
+- **Court and Daily Docket remain account-based, ungated and unchanged.** NFT-only jury policy still fails closed. $CHOG nominations, token thresholds, QR/WalletConnect, smart-contract wallet/EIP-1271 signatures, NFT-gated court actions and live token reputation from court participation are not implemented. Do not claim NFT-essential jury mechanics are complete. This release provides an authenticated NFT identity, not NFT-powered voting.
+
+No new contract, gas, transaction, transfer, staking, approval, private key, seed phrase, paid provider, or RPC API key is needed. `MONAD_RPC_URL` remains the optional existing server-only override. Collection and chain are fixed in code; reserved `.env.example` values do not override them. No hosting or production settings were changed. Migration 003 is additive and applies only when the updated server opens a database; this task's tests use temporary databases only.
+
+### Manual real-wallet test (still required)
+
+1. From a clean local development shell, run `npm run demo`. This uses a **fresh temporary database**, loopback only, and does not load `.env`. It also preserves normal Community Court deadlines. Open `http://127.0.0.1:4174/#account` in the browser containing your wallet extension. Do not tunnel/publish this demo.
+2. Register/sign in to a court account. In **Chog Genesis identity**, click **Connect wallet**. Check the displayed address. Switch to Monad if asked; if the wallet has no Monad configuration, add chain 143 with the public RPC from [Monad's official docs](https://docs.monad.xyz/developer-essentials/network-information).
+3. Leave token ID blank to check whether you hold any Chog Genesis NFT. For a token-keyed identity, enter the final numeric segment of your NFT's OpenSea item URL, **not necessarily the CHOG number printed on the artwork**.
+4. Click **Sign & verify NFT**. Review the message: this local site's host, your wallet address, chain 143, expiration and a sign-in statement. Sign only that message. There should be **no transaction, spending approval or fee**. Reject anything unexpected.
+5. A holder should see a signed-wallet status, observed balance, block and time; with a matching token ID, Reputation should show its token key separately from account activity. A nonholder should authenticate but see **no eligible NFT**, not a fabricated balance. You do not need to buy anything to test nonholder behavior or use the court.
+6. Reject a signature once; switch accounts/networks; disconnect and reconnect. Each change must clear the prior authentication. Use **Recheck ownership** for a fresh observation. Sign again after changing the optional token ID. Court voting should still work without a wallet.
+
+Automated signing uses unfunded disposable test keys and labelled RPC fixtures; it is **not a real extension test**. Real-network smoke results and exact automated runs are recorded in [TESTING.md](TESTING.md). A human must complete the extension/signing steps above before calling the wallet experience manually verified.
+
+## Historical audit below — superseded by the implementation above
+
 ## Finalization check — 2026-10-19
 
 The owner supplied `0x350035555e10d9afaf1566aaebfced5ba6c27777` as an NFT collection. **This reference is incompatible with the requested NFT role.** The [official site](https://www.chog.xyz/) publishes it as the **$CHOG token**; the supplied [OpenSea URL](https://opensea.io/token/monad/0x350035555e10d9afaf1566aaebfced5ba6c27777) is a fungible-token trading page, not an NFT collection page.

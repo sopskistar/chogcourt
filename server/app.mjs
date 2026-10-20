@@ -2,7 +2,8 @@ import {createHash,randomBytes,randomUUID,scrypt as scryptCallback,timingSafeEqu
 import {promisify} from 'node:util';
 import {transaction,isDemoDatabase,SCHEMA_VERSION} from './database.mjs';
 import {createDaily} from './daily.mjs';
-import {createWalletInspector,NFT_BLOCKER,OWNER_COLLECTION_REFERENCE} from './wallet.mjs';
+import {createWalletInspector,NFT_BLOCKER,NFT_COLLECTION} from './wallet.mjs';
+import {createWalletAuth} from './wallet-auth.mjs';
 import {CHOICES,verdictFrom,participationStats,tokenKey} from './rules.mjs';
 const scrypt=promisify(scryptCallback);
 const hash=value=>createHash('sha256').update(value).digest('hex');
@@ -16,6 +17,7 @@ const CATEGORIES=['Community','Memes','Chog lore'];
 export function createApplication({db,origin='http://127.0.0.1:4173',production=false,now=()=>new Date(),quorum=3,evidenceSeconds=86400,votingSeconds=86400,juryPolicy='account',registrationCode='',walletInspector=createWalletInspector()}) {
   if(isDemoDatabase(db)&&(production||process.env.NODE_ENV==='production'||new URL(origin).hostname!=='127.0.0.1'||new URL(origin).protocol!=='http:'))throw Error('Local demo requires a loopback-only development server.');
   const daily=createDaily({db,now});
+  const walletAuth=createWalletAuth({db,origin,now,inspect:walletInspector});
   const sessionName=isDemoDatabase(db)?'chog_demo_session':'chog_session';
   if(!['account','nft'].includes(juryPolicy))throw Error('JURY_POLICY must be account or nft');
   for(const n of [quorum,evidenceSeconds,votingSeconds])if(!Number.isSafeInteger(n)||n<1)throw Error('Court rule values must be positive integers');
@@ -76,7 +78,7 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
   }
   const cookie=token=>`${sessionName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${token?604800:0}${production?'; Secure':''}`;
   const json=(data,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers}});
-  const chain={network:'Monad',chainId:143,tokenContract:'0x350035555E10d9AfAF1566AaebfCeD5BA6C27777',tokenSource:'https://www.chog.xyz/',nftCollection:null,ownerCollectionReference:OWNER_COLLECTION_REFERENCE,walletConnection:'injected-eip1193',nominationThreshold:null,walletVerification:false,balanceVerified:false,nominationEnabled:false,blocker:NFT_BLOCKER};
+  const chain={network:'Monad',chainId:143,tokenContract:'0x350035555E10d9AfAF1566AaebfCeD5BA6C27777',tokenSource:'https://www.chog.xyz/',nftCollection:NFT_COLLECTION,nftSource:'https://mint.chog.xyz/',walletConnection:'injected-eip1193',nominationThreshold:null,walletVerification:true,nftJuryEnabled:false,balanceVerified:false,nominationEnabled:false,blocker:NFT_BLOCKER};
   return async function handle(request,{ip='local'}={}) {
     try {
       const url=new URL(request.url),path=url.pathname,method=request.method;
@@ -99,6 +101,20 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
       if(path==='/api/wallet/inspect'&&method==='POST'){
         fields(body,['address']);rate('wallet:'+user.id,6);rate('wallet:global',60);
         return json(await walletInspector(body.address));
+      }
+      if(path==='/api/wallet/status'&&method==='GET')return json(walletAuth.status(user));
+      if(path==='/api/wallet/disconnect'&&method==='POST'){fields(body,[]);return json(walletAuth.disconnect(user));}
+      if(path==='/api/wallet/challenge'&&method==='POST'){
+        fields(body,['address','chainId','tokenId']);rate('wallet-challenge:'+user.id,12);
+        return json(walletAuth.challenge(user,body));
+      }
+      if(path==='/api/wallet/verify'&&method==='POST'){
+        fields(body,['challengeId','signature']);rate('wallet-verify:'+user.id,6);rate('wallet:global',60);
+        return json(await walletAuth.verify(user,body));
+      }
+      if(path==='/api/wallet/recheck'&&method==='POST'){
+        fields(body,[]);rate('wallet-recheck:'+user.id,6);rate('wallet:global',60);
+        return json(await walletAuth.recheck(user));
       }
       if(path==='/api/daily'&&method==='GET')return json(daily.list(user));
       if(path==='/api/daily'&&method==='POST')return json(daily.submit(body,user),201);
@@ -199,7 +215,8 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
         if(!user)fail(401,'AUTH_REQUIRED','Sign in to view your participation.');
         const votes=db.prepare('SELECT created_at FROM votes WHERE user_id=?').all(user.id),e=db.prepare('SELECT count(DISTINCT claim_id) AS n FROM evidence WHERE author_id=?').get(user.id).n;
         const cases=db.prepare('SELECT DISTINCT c.id FROM claims c LEFT JOIN votes v ON v.claim_id=c.id WHERE c.plaintiff_id=? OR c.defendant_id=? OR v.user_id=? ORDER BY c.created_at DESC').all(user.id,user.id,user.id).map(c=>view(syncClaim(c.id),user));
-        return json({user:publicUser(user),stats:participationStats(votes,e,now()),cases,identity:{verified:false,tokenKey:null},source:'shared-offchain',dailyHistory:daily.history(user)});
+        const wallet=walletAuth.status(user);
+        return json({user:publicUser(user),stats:participationStats(votes,e,now()),cases,identity:{verified:!!wallet.tokenKey,tokenKey:wallet.tokenKey,wallet},source:'shared-offchain',dailyHistory:daily.history(user)});
       }
       if(path==='/api/reputation'&&method==='GET') {
         const key=tokenKey(Object.fromEntries(url.searchParams));if(!key)fail(422,'INVALID_TOKEN_KEY','Provide chainId, collectionAddress and decimal tokenId.');
@@ -209,7 +226,6 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
       }
       if(path==='/api/nominations'&&method==='GET')return json({enabled:false,nominations:[],chain});
       if(path==='/api/nominations'&&method==='POST')fail(503,'HOLDER_VERIFICATION_UNAVAILABLE',chain.blocker);
-      if(path==='/api/wallet/challenge'&&method==='POST')fail(503,'WALLET_UNAVAILABLE','Wallet authentication is not enabled. No signature or transaction is requested.');
       fail(404,'NOT_FOUND','API route not found.');
     } catch(error) {
       const status=error.status||500;

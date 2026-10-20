@@ -6,7 +6,7 @@ The existing single-file vanilla frontend now connects to a persistent Node.js/S
 
 ## Run locally
 
-Requires Node.js 22.16 or newer. No third-party runtime dependencies or npm installation are needed.
+Requires Node.js 22.16 or newer. No npm installation is needed. A pinned, vendored ethers signature verifier is included server-side with its license; the frontend remains vanilla and has no external libraries.
 
 ```sh
 npm run dev
@@ -57,21 +57,21 @@ The demo refuses `NODE_ENV=production` or inherited `DATABASE_PATH`, `PUBLIC_ORI
 - Full-artwork galleries and individually enlarged illustrations, scrollable landing-page sections, accessible menu/dialog controls, and all existing local practice examples.
 - Persistent records across separate users, browser sessions and server restarts. Shared data is never sourced from browser localStorage.
 
-The default jury policy is explicitly **authenticated court accounts**, not verified NFT holders or one-human-one-vote. Multiple accounts remain a Sybil risk. For controlled testing, configure `REGISTRATION_CODE`. Set `JURY_POLICY=nft` only if you want voting to fail closed while NFT verification is unavailable.
+The default jury policy is explicitly **authenticated court accounts**, not verified NFT holders or one-human-one-vote. Multiple accounts remain a Sybil risk. Wallet identity verification does not change this policy. `JURY_POLICY=nft` still fails closed: NFT-gated voting has not been enabled.
 
-## Wallet connection and NFT blocker
+## Wallet authentication and Chog Genesis identity
 
-Open **Sign in / register → Chog NFT juror identity**. Connect an existing injected browser wallet, view its address, and switch to Monad if requested. Signed-in court users can run a read-only compatibility check against the owner-supplied address. Disconnect clears the page connection; it does not log out your court account. No signatures, transactions, keys, token purchases or API subscription are needed.
+Open **Sign in / register → Chog Genesis identity**. Sign into a court account, connect an existing injected browser wallet, and switch to Monad mainnet (143). Connection alone is not authentication. Click **Sign & verify NFT** to approve a domain-bound, five-minute, single-use sign-in message. No transaction, approval, token purchase, seed phrase or private key is requested. Authentication lasts one hour in that court session; disconnect, account/network changes and court logout revoke it.
 
-The supplied `0x350035555e10d9afaf1566aaebfced5ba6c27777` is published as the **fungible $CHOG token**, not the NFT collection. Real public RPC returned Monad chain ID 143; the contract rejected ERC-721 support and returned 18 decimals. The UI reports this conflict and grants no NFT identity or eligibility. Connection is **not authentication or ownership**. A real wallet has not been manually tested; automated provider fixtures are labelled as tests.
+The allowlisted NFT is **Chog Genesis**, `0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763`, linked by [Chog's official mint site](https://mint.chog.xyz/) to [OpenSea](https://opensea.io/collection/chog-genesis). The older `0x3500…7777` address is the fungible $CHOG token and is not used for NFT checks. The server reads ERC-721 support and `balanceOf` via the public Monad RPC; an optional token ID additionally checks `ownerOf` and saves a token-keyed identity observation. RPC errors never count as ownership. No API key is required for basic public-RPC use.
 
-The meaningful proposed NFT feature is collection + token-ID juror identity with current-owner checks. It remains blocked until the correct official NFT collection and signed authentication are verified. **Do not claim the NFT-essential hackathon requirement is met yet.** Details, observations and required next steps: [BLOCKCHAIN.md](docs/BLOCKCHAIN.md).
+For a specific identity, enter the on-chain token ID from the OpenSea URL (not the artwork's displayed name), then sign. Reputation displays that session's observed identity separately from account scores/history. **Recheck ownership** makes new live reads; a transfer can invalidate a prior observation. Account activity is not retroactively assigned to the NFT. Smart-contract wallet signatures, WalletConnect/QR, NFT-gated voting and holder nominations are not implemented. The NFT-backed identity works independently of voting; do not claim NFT-essential jury mechanics are complete. Full manual test steps: [BLOCKCHAIN.md](docs/BLOCKCHAIN.md).
 
 ## What is not enabled
 
-The official Chog website corroborates the $CHOG token address, and Monad's official docs corroborate mainnet chain ID 143. The NFT collection was not independently corroborated from an authoritative Chog source. Wallet authentication, NFT ownership, token balances, a holder balance threshold, and nomination selection policy remain unconfigured. The nomination UI and API clearly reject unavailable holder actions. No featured winner, ownership claim or blockchain confirmation is fabricated.
+The $CHOG token-balance requirement and nomination selection policy remain unconfigured. Chog Genesis NFT verification does not establish $CHOG token eligibility. The nomination UI and API still reject unavailable holder actions. No featured winner or eligibility threshold is invented.
 
-NFT history storage uses network + collection address + token ID, with the current owner stored separately. Transfer-stable association is tested using labelled injected proofs only. No public endpoint can create a verified NFT record from a client assertion. Real blockchain verification is still required before linking real cases to NFTs. See [blockchain verification](docs/BLOCKCHAIN.md).
+NFT identity storage uses network + collection address + token ID, with the last observed owner stored separately. Only server-verified signed sessions and RPC reads can create an identity observation. Existing claims and votes are not linked to that NFT; current-owner checks at gated court actions remain future work.
 
 Password recovery, email verification, content moderation, malware scanning and automated backups are not implemented. Evidence is public; do not upload private information. Community court findings are not legal judgments.
 
@@ -88,9 +88,9 @@ The “Local practice examples” button keeps the previous browser-only fronten
 ## Architecture and API
 
 - Frontend: `index.html`, inline CSS/JavaScript/SVG; embedded Archivo/Inter WOFF2 and OFL license.
-- Backend: built-in Node HTTP, crypto and SQLite modules; no external runtime library.
+- Backend: built-in Node HTTP, crypto and SQLite modules, plus the pinned server-side ethers signature verifier.
 - Database: SQLite with WAL, foreign keys, transactional migrations/finalization, immutable history and uniqueness constraints.
-- Production: one Node/Docker instance and a persistent disk. Static-only or ephemeral serverless hosting is unsuitable without a database/runtime adapter. Schema 002 adds daily tables without changing existing court tables; startup upgrades schema 001 transactionally. Back up any deployed database before a separately approved upgrade.
+- Production: one Node/Docker instance and a persistent disk. Static-only or ephemeral serverless hosting is unsuitable without a database/runtime adapter. Schema 002 adds daily tables; schema 003 adds wallet-session/challenge tables without changing existing court tables or rules. Back up any deployed database before a separately approved upgrade. No hosting or production settings were changed by the wallet implementation.
 - Full endpoint contract: [docs/API.md](docs/API.md).
 - Hosting setup, migrations, backup requirements and phone testing: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 

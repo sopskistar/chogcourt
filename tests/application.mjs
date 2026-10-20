@@ -5,13 +5,15 @@ import {tmpdir} from 'node:os';
 import {createServer} from '../server/index.mjs';
 import {openDatabase,openTemporaryDemoDatabase} from '../server/database.mjs';
 import {launchBrowser,wait} from './browser-tools.mjs';
+import {Wallet} from '../server/vendor/ethers-6.17.0.mjs';
+import {NFT_COLLECTION} from '../server/wallet.mjs';
 
 const artifacts=await fs.mkdtemp(join(tmpdir(),'chog-app-')),checks=[],errors=[];
 const db=openDatabase(join(artifacts,'court.sqlite'));let time=Date.now(),runner,browser,base,failure=null;
 // Labelled RPC fixtures only; no real wallet or NFT ownership is simulated as
 // production verification. Existing court tests never need external RPC access.
-let walletFailure=false,walletDelay=false,releaseWallet;const walletChecks=[];
-async function walletInspector(address){walletChecks.push(address);if(walletDelay)await new Promise(resolve=>releaseWallet=resolve);if(walletFailure)throw Object.assign(Error('Monad RPC is unavailable. Ownership was not verified.'),{status:503,code:'RPC_UNAVAILABLE'});return {status:'NOT_ERC721',ownershipVerified:false,eligible:false,blockNumber:'0x123',message:'The supplied contract did not pass the ERC-721 checks. NFT jury access remains unavailable.'};}
+let walletFailure=false,walletDelay=false,releaseWallet,walletHolding=true;const walletChecks=[],browserSigner=Wallet.createRandom();
+async function walletInspector(address,tokenId=null){walletChecks.push(address);if(walletDelay)await new Promise(resolve=>releaseWallet=resolve);if(walletFailure)throw Object.assign(Error('Monad RPC is unavailable. Ownership was not verified.'),{status:503,code:'RPC_UNAVAILABLE'});if(address.toLowerCase()===browserSigner.address.toLowerCase())return {address:address.toLowerCase(),contract:NFT_COLLECTION,chainId:143,blockNumber:'0x123',blockHash:'0x'+'b'.repeat(64),tokenId,balance:walletHolding?'1':'0',holder:walletHolding,ownsToken:walletHolding&&tokenId==='476',status:walletHolding?'HOLDER':'NOT_HOLDER',ownershipVerified:false,walletAuthenticated:false,eligible:false,message:walletHolding?'Chog Genesis ownership read succeeded.':'No Chog Genesis NFT is held by this wallet at the observed block.'};return {status:'NOT_ERC721',ownershipVerified:false,eligible:false,blockNumber:'0x123',message:'The supplied contract did not pass the ERC-721 checks. NFT jury access remains unavailable.'};}
 async function check(name,fn){await fn();checks.push(name);console.log('PASS '+name);}
 async function input(p,selector,value){await p.js(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('input',{bubbles:true}));})()`);}
 async function open(p,view,id){await p.js(`(()=>{const a=document.createElement('a');a.href=${JSON.stringify('#'+view)};${id?`a.dataset.openCase=${JSON.stringify(id)};`:''}document.body.appendChild(a);a.click();a.remove();})()`);await p.until(`document.querySelector('dialog').open && !document.querySelector('#dialog-body').textContent.includes('Opening the shared court')`);assert.equal(await p.js(`!!document.querySelector('#dialog-body > .api-error')`),false,await p.js(`document.querySelector('#dialog-body').textContent`));}
@@ -22,8 +24,10 @@ async function screenshot(p,name){const r=await p.call('Page.captureScreenshot',
 // Resizing queues fit() in requestAnimationFrame. A fixed delay can still inspect
 // the previous scale in background contexts; wait for the actual layout inputs.
 async function resize(p,width,height) {
+ await p.call('Page.bringToFront');
  await p.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:width<500});
- await p.until(`(()=>{const h=document.documentElement,c=getComputedStyle(h),w=h.clientWidth,v=innerHeight,s=w/v>1280/800?v/800:w/1280;return innerWidth===${width}&&innerHeight===${height}&&h.classList.contains(c.getPropertyValue('--mode').trim())&&Math.abs(Number(h.style.getPropertyValue('--s'))-s)<1e-7})()`);
+ try {await p.until(`(()=>{const h=document.documentElement,c=getComputedStyle(h),w=h.clientWidth,v=innerHeight,s=w/v>1280/800?v/800:w/1280;return innerWidth===${width}&&innerHeight===${height}&&h.classList.contains(c.getPropertyValue('--mode').trim())&&Math.abs(Number(h.style.getPropertyValue('--s'))-s)<1e-7})()`);}
+ catch(error){throw Error(error.message+' Layout: '+JSON.stringify(await p.js(`({width:innerWidth,height:innerHeight,client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,mode:getComputedStyle(document.documentElement).getPropertyValue('--mode'),classes:document.documentElement.className,scale:document.documentElement.style.getPropertyValue('--s'),visibility:document.visibilityState})`)));}
 }
 // CDP Enter needs its text payload to generate keypress/native button activation.
 async function key(p,key,code=key,windowsVirtualKeyCode=key==='Enter'?13:27){await p.call('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode,...(key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})});await p.call('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode});}
@@ -49,6 +53,17 @@ try {
   assert.equal(await plaintiff.js(`document.documentElement.hasAttribute('data-shared-court')`),true);
   for(const file of ['chog-court-logo.png','chog-court-judge.png','chog-official-pfp.png','verdict-machine.png','jury-streaks-daily-docket.png','chog-reputation-card.png','chog-case-of-the-day.png']){const r=await fetch(base+'/assets/images/'+file);assert.equal(r.status,200);assert.equal(r.headers.get('content-type'),'image/png');const bytes=Buffer.from(await r.arrayBuffer());assert.equal(bytes.subarray(0,8).toString('hex'),'89504e470d0a1a0a');}
  });
+ await check('Hero scale tracks scrollbar width changes without a window resize',async()=>{
+  await resize(plaintiff,1280,800);
+  const original=await plaintiff.js(`document.documentElement.style.overflowY`);
+  try {
+   for(const overflow of ['hidden','scroll','hidden']){
+    await plaintiff.js(`document.documentElement.style.overflowY=${JSON.stringify(overflow)}`);
+    await plaintiff.until(`Math.abs(Number(document.documentElement.style.getPropertyValue('--s'))-document.documentElement.clientWidth/1280)<1e-7`);
+    assert.equal(await plaintiff.js(`innerWidth`),1280);
+   }
+  } finally {await plaintiff.js(`document.documentElement.style.overflowY=${JSON.stringify(original)}`);}
+ });
  await check('Independent browser sessions register and authenticate separate shared accounts',async()=>{await register(plaintiff,'plaintiff_browser');await register(defendant,'defendant_browser');await register(juror,'juror_browser');assert.ok((await plaintiff.js(`document.querySelector('.live-bar').textContent`)).includes('plaintiff_browser'));assert.ok((await defendant.js(`document.querySelector('.live-bar').textContent`)).includes('defendant_browser'));});
  await check('Wallet UI handles missing provider and rejection; injected test wallet connects without signing',async()=>{
   await open(juror,'account');await juror.js(`document.querySelector('[data-wallet="connect"]').click()`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('No browser wallet')`);
@@ -73,6 +88,25 @@ try {
   await juror.js(`document.querySelector('[data-wallet="connect"]').click()`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('ERC-721')`);await juror.js(`window.walletFixture.handlers.disconnect({code:4900})`);await juror.until(`document.querySelector('[data-wallet-status]').textContent.includes('Wallet disconnected')`);
   assert.ok((await juror.js(`window.walletFixture.calls.map(q=>q.method)`)).every(m=>['eth_requestAccounts','eth_accounts','eth_chainId','wallet_switchEthereumChain'].includes(m)));
   await reload(juror);await open(juror,'account');assert.equal(await juror.js(`document.querySelector('[data-wallet-address]').textContent`),'No wallet connected');assert.ok((await juror.js(`document.querySelector('.live-bar').textContent`)).includes('juror_browser'));
+ });
+ await check('Signed-wallet flow verifies a token using real signatures and labelled RPC fixtures, handles rejection/transfer/offline, and revokes on chain change',async()=>{
+  const holder=await readyPage();await register(holder,'nft_identity_browser');await open(holder,'account');
+  await holder.call('Runtime.addBinding',{name:'signTestMessage'});
+  holder.handlers.push(d=>{if(d.method==='Runtime.bindingCalled'&&d.params.name==='signTestMessage')browserSigner.signMessage(Buffer.from(JSON.parse(d.params.payload).hex.slice(2),'hex')).then(signature=>holder.js(`window.walletFixture.resolve(${JSON.stringify(signature)})`)).catch(e=>errors.push({testSigningError:e.message}));});
+  await holder.js(`window.walletFixture={address:${JSON.stringify(browserSigner.address)},chain:'0x8f',reject:true,calls:[],handlers:{}};window.ethereum={request:async q=>{const w=window.walletFixture;w.calls.push(q);if(q.method==='eth_requestAccounts'||q.method==='eth_accounts')return [w.address];if(q.method==='eth_chainId')return w.chain;if(q.method==='personal_sign'){if(w.reject)throw {code:4001};return new Promise(resolve=>{w.resolve=resolve;window.signTestMessage(JSON.stringify({hex:q.params[0]}))})}throw Error('Forbidden wallet method')},on:(e,f)=>window.walletFixture.handlers[e]=f,removeListener:(e,f)=>{if(window.walletFixture.handlers[e]===f)delete window.walletFixture.handlers[e]}};document.querySelector('[data-wallet="connect"]').click()`);
+  await holder.until(`document.querySelector('[data-wallet="verify"]') && !document.querySelector('[data-wallet="verify"]').disabled`);
+  await input(holder,'[data-wallet-token]','476');await holder.js(`document.querySelector('[data-wallet="verify"]').click()`);await holder.until(`document.querySelector('[data-wallet-status]').textContent.includes('rejected')`);
+  assert.ok((await holder.js(`document.querySelector('[data-wallet-proof]').textContent`)).includes('not verified'));
+  await holder.js(`window.walletFixture.reject=false;document.querySelector('[data-wallet="verify"]').click()`);await holder.until(`document.querySelector('[data-wallet-proof]').textContent.includes('verified at the recorded block')`);
+  assert.ok((await holder.js(`document.querySelector('#wallet-panel').textContent`)).includes('eip155:143:erc721:'+NFT_COLLECTION+'/476'));
+  for(const theme of ['light','purple']){await resize(holder,390,844);await holder.js(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);assert.equal(await holder.js(`document.querySelector('dialog').scrollWidth<=document.querySelector('dialog').clientWidth+1`),true);for(const c of await holder.js(contrastCheck))assert.ok(c.ratio>=4.5,JSON.stringify(c));}
+  await open(holder,'reputation');assert.ok((await holder.js(`document.querySelector('#dialog-body').textContent`)).includes('verified token observation'));await open(holder,'account');
+  walletHolding=false;await holder.js(`document.querySelector('[data-wallet="inspect"]').click()`);await holder.until(`document.querySelector('[data-wallet-status]').textContent.includes('No Chog Genesis')`);assert.ok((await holder.js(`document.querySelector('[data-wallet-proof]').textContent`)).includes('not verified'));
+  walletFailure=true;await holder.js(`document.querySelector('[data-wallet="inspect"]').click()`);await holder.until(`document.querySelector('[data-wallet-status]').textContent.includes('RPC is unavailable')`);assert.equal(await holder.js(`fetch('/api/wallet/status').then(r=>r.json()).then(r=>r.ownershipVerified)`),false);walletFailure=false;walletHolding=true;
+  await holder.js(`document.querySelector('[data-wallet="verify"]').click()`);await holder.until(`document.querySelector('[data-wallet-proof]').textContent.includes('verified at the recorded block')`);
+  await holder.js(`window.walletFixture.chain='0x1';window.walletFixture.handlers.chainChanged('0x1')`);await holder.until(`document.querySelector('[data-wallet-status]').textContent.includes('Wrong network')`);assert.equal(await holder.js(`fetch('/api/wallet/status').then(r=>r.json()).then(r=>r.walletAuthenticated)`),false);
+  assert.ok((await holder.js(`window.walletFixture.calls.map(q=>q.method)`)).every(m=>['eth_requestAccounts','eth_accounts','eth_chainId','personal_sign'].includes(m)));
+  await holder.js(`document.querySelector('[data-wallet="disconnect"]').click()`);
  });
  await check('Wallet panel fits light/purple desktop and mobile, with readable controls and keyboard focus',async()=>{
   for(const [w,h]of [[1440,900],[390,844]])for(const theme of ['light','purple']){

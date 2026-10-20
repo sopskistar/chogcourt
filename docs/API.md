@@ -14,7 +14,7 @@ All writes except login/registration require the cookie, `Content-Type: applicat
 
 | Method / path | Request / response |
 | --- | --- |
-| `GET /api/health` | `{ok:true,database:"sqlite",schema:2}` after a database check |
+| `GET /api/health` | `{ok:true,database:"sqlite",schema:3}` after a database check |
 | `GET /api/config` | Court rules, account/NFT jury policy, published token metadata and disabled integration flags |
 | `GET /api/claims?offset=0` | `{cases,nextOffset}`; 50 cases per page, newest first |
 | `POST /api/claims` | `{title,category,argument,defendant}`; returns case, 201 |
@@ -32,12 +32,20 @@ All writes except login/registration require the cookie, `Content-Type: applicat
 | `GET /api/reputation?chainId=…&collectionAddress=…&tokenId=…` | Historical verified NFT record, if one exists; 404 for unverified identities |
 | `GET /api/nominations` | Disabled status and exact verification blockers; no fabricated featured case |
 | `POST /api/nominations` | Always 503 until verified holder integration and a published policy are implemented |
-| `POST /api/wallet/challenge` | Always 503; no supported wallet authentication flow has been enabled |
-| `POST /api/wallet/inspect` | Signed-in account + CSRF; `{ "address": "0x…" }`. Read-only Monad/contract compatibility diagnostic, never ownership authentication or eligibility |
+| `POST /api/wallet/challenge` | `{address,chainId:143,tokenId?:"476"}` → `{challengeId,message,expiresAt,address,chainId}`; five-minute single-use sign-in challenge |
+| `POST /api/wallet/verify` | `{challengeId,signature}` → signed-wallet status and live ownership observation; consumes nonce before verification |
+| `POST /api/wallet/recheck` | `{}` → new ownership observation for this authenticated wallet session; clears old observation before reading |
+| `POST /api/wallet/disconnect` | `{}` → revoke this session's challenge and wallet proof, not its court login |
+| `GET /api/wallet/status` | Session-local authentication/observation; unauthenticated or expired session returns false flags |
+| `POST /api/wallet/inspect` | `{address}` → unauthenticated read-only observation; never establishes control, saves a token identity or grants voting eligibility |
 
 Unknown fields on implemented case mutations are rejected. Clients cannot choose another plaintiff, supply final outcomes, forge NFT associations, or override deadlines/quorum. Case categories are `Community`, `Memes`, `Chog lore`. A defendant must be an existing, different active account.
 
-Wallet diagnostics accept only `address` (20-byte hex). Limit: 6 calls/account/minute and 60 total/minute per server instance. The server—not the browser—selects the RPC and fixed owner-provided contract. Responses include the observed `chainId`, `blockNumber`, `blockHash` and status `NOT_ERC721`, `NO_CONTRACT` or `COLLECTION_IDENTITY_CONFLICT`; **all** keep `ownershipVerified:false`, `walletAuthenticated:false`, `eligible:false` and `collectionTrusted:false`. RPC/network/malformed failures return 503; invalid addresses return 422. No balance, token record, signature, session-wallet binding or eligibility is created. Client-supplied addresses are untrusted observations. This endpoint deliberately cannot satisfy NFT jury policy while the NFT collection reference is disputed. See [BLOCKCHAIN.md](BLOCKCHAIN.md).
+Wallet writes require a court login and CSRF. Challenges are limited to 12/account/minute; inspect, verify and recheck each to 6/account/minute, sharing a global 60 RPC operations/minute/process limit. The generic 60 authenticated writes/minute limit also applies. Disconnect remains available when the RPC-specific limit is reached. Addresses must be nonzero 20-byte hex; optional token IDs are decimal uint256 strings. No endpoint accepts a client-provided ownership result or alternate collection.
+
+The fixed collection is Chog Genesis `0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763` on Monad 143. EIP-191 signature recovery uses a stored domain/session/chain/address/nonce-bound message. Nonces last five minutes and cannot be replayed; wallet authentication lasts one hour. Signature, challenge and session failures return 401/409; invalid fields 422; RPC/network/interface failures 503. EIP-1271 contract-wallet signatures are not supported.
+
+Authenticated status includes `walletAuthenticated`, `ownershipVerified`, `expiresAt`, optional `tokenKey`, and `observation:{status,balance,tokenId,tokenOwner,blockNumber,blockHash,checkedAt,source,...}`. Observation statuses: `HOLDER`, `NOT_HOLDER`, `TOKEN_NOT_OWNED`. Balances/IDs are strings. Ownership is true only after valid authentication and successful live reads, and describes the displayed block. Without a supplied token ID, a holder has no token key. `/inspect` always leaves authentication and ownership-verification flags false despite reading a balance. `eligible` stays false everywhere: this integration does not enable NFT-gated voting or nominations. Recheck failure clears the current observation, not historical token records. See [BLOCKCHAIN.md](BLOCKCHAIN.md).
 
 ## Lifecycle and verdict rules
 
@@ -49,7 +57,7 @@ Cases start OPEN. A first evidence submission, response, or party readiness move
 
 Phases advance during case retrieval or mutations, including after long idle periods. No background scheduler is required. A response deadline starts a voting period at that deadline, not at the next visit. Both-party early readiness starts a full voting period immediately. A party cannot add evidence or respond after marking itself ready. Case parties never vote.
 
-The default `account` jury policy allows active authenticated accounts other than the parties. It is deliberately not called NFT verification or one-human-one-vote: multiple accounts remain a Sybil risk. `nft` policy fails closed until an independently verified ownership adapter exists. SQLite primary/unique keys enforce one vote per account/case and reserve one vote per verified NFT/case.
+The default `account` jury policy allows active authenticated accounts other than the parties. It is deliberately not called NFT verification or one-human-one-vote: multiple accounts remain a Sybil risk. `nft` policy still fails closed: identity verification is implemented separately, but current-owner checks at voting and NFT jury policy are not enabled. SQLite primary/unique keys enforce one vote per account/case and reserve one vote per verified NFT/case.
 
 At the voting deadline, the server counts accepted votes in a transaction and persists exactly one verdict. Default quorum is 3. A unique plurality wins when quorum is met. A tie or insufficient quorum yields `NOT_ENOUGH_EVIDENCE`, with reason `TIE` or `INSUFFICIENT_QUORUM`; otherwise the reason is `PLURALITY`. Finalization is idempotent. Interim counts expose participation only, not other jurors' choices. The viewer can see their own vote. Accusations, reputation and Chaos Meter values never affect verdict calculation.
 
@@ -61,7 +69,7 @@ Shared achievements use server-accepted vote timestamps: First Vote = 1, Consist
 
 Shared Chaos is `min(100, 8 × min(5,evidence items) + 4 × min(15,eligible account votes))`. Labels are Low Chaos (0–24), Court Is Heating Up (25–59), Maximum Chaos (60–100). Account jury participation is explicitly not NFT-holder participation.
 
-NFT identity uses `eip155:<chainId>:erc721:<lowercase collection>/<decimal tokenId>`. Historical case references use that key; ownership is separate metadata. `saveVerifiedToken` is an internal persistence boundary, not verification by itself. Only tests currently inject ownership proofs, explicitly marked test fixtures. No public route accepts client-supplied verification or attaches an unverified token to a real case. See [blockchain status](BLOCKCHAIN.md).
+NFT identity uses `eip155:<chainId>:erc721:<lowercase collection>/<decimal tokenId>`. Historical case references use that key; ownership is separate metadata. `saveVerifiedToken` is an internal persistence boundary: the wallet-auth module calls it only after recovering a valid session-bound signer and reading the allowlisted token's owner. No public route accepts client-supplied verification or attaches an NFT to a real case. `/api/profile` includes the session's token observation, but account participation history/score is not assigned to that NFT. See [blockchain status](BLOCKCHAIN.md).
 
 ## Errors and operational limits
 
