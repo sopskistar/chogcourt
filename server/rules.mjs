@@ -27,3 +27,10 @@ export function saveVerifiedToken(db,proof) {
     ON CONFLICT(token_key) DO UPDATE SET verified_at=excluded.verified_at,verification_source=excluded.verification_source,current_owner=excluded.current_owner`).run(key,String(BigInt(proof.chainId)),proof.collectionAddress.toLowerCase(),String(BigInt(proof.tokenId)),proof.verifiedAt,proof.verificationSource,proof.owner.toLowerCase());
   return key;
 }
+export async function saveVerifiedTokenAsync(db,proof) {
+  const key=tokenKey(proof);
+  if(!key||proof.verified!==true||!proof.verificationSource||!proof.verifiedAt||!/^0x[0-9a-fA-F]{40}$/.test(proof.owner||'')) throw Error('Verified ownership evidence required');
+  await db.prepare(`INSERT INTO tokens(token_key,chain_id,collection_address,token_id,verified_at,verification_source,current_owner) VALUES(?,?,?,?,?,?,?)
+    ON CONFLICT(token_key) DO UPDATE SET verified_at=excluded.verified_at,verification_source=excluded.verification_source,current_owner=excluded.current_owner`).run(key,String(BigInt(proof.chainId)),proof.collectionAddress.toLowerCase(),String(BigInt(proof.tokenId)),proof.verifiedAt,proof.verificationSource,proof.owner.toLowerCase());
+  return key;
+}

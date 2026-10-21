@@ -2,17 +2,16 @@ import {DatabaseSync} from 'node:sqlite';
 import {mkdirSync,readFileSync,mkdtempSync} from 'node:fs';
 import {dirname,resolve,join} from 'node:path';
 import {tmpdir} from 'node:os';
+import {registerDemoDatabase,transaction,isDemoDatabase,SCHEMA_VERSION} from './store.mjs';
+export {transaction,isDemoDatabase,SCHEMA_VERSION} from './store.mjs';
 
-export const SCHEMA_VERSION=3;
-const demoDatabases=new WeakSet();
 // No filename argument: short trials can only use a fresh, isolated database.
 export function openTemporaryDemoDatabase() {
   const directory=mkdtempSync(join(tmpdir(),'chog-docket-demo-'));
   const db=openDatabase(join(directory,'demo.sqlite'));
-  demoDatabases.add(db);
+  registerDemoDatabase(db);
   return {db,directory};
 }
-export const isDemoDatabase=db=>!!db&&demoDatabases.has(db);
 
 export function openDatabase(path) {
   if(path!==':memory:') mkdirSync(dirname(resolve(path)),{recursive:true});
@@ -35,8 +34,4 @@ export function openDatabase(path) {
     catch(error){db.close();throw error;}
   }
   return db;
-}
-export function transaction(db,fn) {
-  db.exec('BEGIN IMMEDIATE');
-  try {const value=fn();db.exec('COMMIT');return value;} catch(error){db.exec('ROLLBACK');throw error;}
 }

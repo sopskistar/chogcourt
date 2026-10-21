@@ -1,6 +1,6 @@
 # Chog Court API v1
 
-Same-origin JSON over HTTP locally, HTTPS in production. Records are **shared off-chain SQLite records**, not blockchain confirmations. No previous backend existed in the repository; the requested `/api/claims` paths are implemented here.
+Same-origin JSON over HTTP locally, HTTPS in production. Production records are **shared off-chain PostgreSQL records**; local development continues to use SQLite. Neither represents blockchain confirmations. The Vercel Function and local Node server expose the same API contract.
 
 ## Authentication
 
@@ -14,7 +14,7 @@ All writes except login/registration require the cookie, `Content-Type: applicat
 
 | Method / path | Request / response |
 | --- | --- |
-| `GET /api/health` | `{ok:true,database:"sqlite",schema:3}` after a database check |
+| `GET /api/health` | `{ok:true,database:"postgres"|"sqlite",schema:3}` after a database check |
 | `GET /api/config` | Court rules, account/NFT jury policy, published token metadata and disabled integration flags |
 | `GET /api/claims?offset=0` | `{cases,nextOffset}`; 50 cases per page, newest first |
 | `POST /api/claims` | `{title,category,argument,defendant}`; returns case, 201 |

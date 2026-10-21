@@ -6,7 +6,6 @@ import {openDatabase,isDemoDatabase} from './database.mjs';
 import {createApplication} from './app.mjs';
 
 export function createServer(options={}) {
-  if(process.env.VERCEL==='1')throw Error('Vercel cannot persist this SQLite backend. Use a single Node/Docker host with a persistent disk; see docs/DEPLOYMENT.md.');
   const production=options.production??process.env.NODE_ENV==='production';
   const port=options.port??Number(process.env.PORT||4173),host=options.host??(process.env.HOST||process.env.IP||'127.0.0.1');
   const origin=options.origin??process.env.PUBLIC_ORIGIN??`http://127.0.0.1:${port}`;

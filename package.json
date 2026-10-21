@@ -3,15 +3,22 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.16.0" },
+  "engines": {
+    "node": ">=22.16.0"
+  },
   "scripts": {
     "demo": "node scripts/demo.mjs",
     "dev": "node --env-file-if-exists=.env server/index.mjs",
     "start": "node --env-file-if-exists=.env server/index.mjs",
     "build": "node scripts/build.mjs",
-    "test": "node tests/backend.test.mjs && node tests/wallet.test.mjs",
+    "build:vercel": "node scripts/build-vercel.mjs",
+    "test": "npm run build:vercel && node tests/backend.test.mjs && node tests/wallet.test.mjs && node tests/postgres.test.mjs && node tests/vercel.test.mjs",
+    "test:postgres:integration": "node tests/postgres.integration.mjs",
     "test:frontend": "node tests/frontend.mjs",
     "test:browser": "node tests/application.mjs",
     "db:migrate": "node --env-file-if-exists=.env server/migrate.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
   }
 }

@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';
 import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -9,6 +8,7 @@ import {Wallet} from '../server/vendor/ethers-6.17.0.mjs';
 import {createWalletInspector,NFT_COLLECTION} from '../server/wallet.mjs';
 import {createApplication} from '../server/app.mjs';
 import {openDatabase} from '../server/database.mjs';
+import {createVercelHandler} from '../api/index.mjs';
 // Disposable, unfunded signers; only RPC is mocked, not signature verification.
 const signer=Wallet.createRandom(),other=Wallet.createRandom(),address=signer.address.toLowerCase();
 const block={number:'0x123',hash:'0x'+'b'.repeat(64)},word=n=>'0x'+BigInt(n).toString(16).padStart(64,'0');
@@ -122,8 +122,14 @@ test('Migration 003 preserves populated v2 Daily Docket; proofs persist after SQ
   assert.deepEqual(db.prepare('SELECT * FROM daily_trials').all(),before);assert.equal(db.prepare('SELECT count(*) n FROM wallet_sessions WHERE authenticated_at IS NOT NULL').get().n,1);assert.equal(db.prepare('SELECT count(*) n FROM wallet_challenges').get().n,0);assert.equal(db.prepare('SELECT count(*) n FROM tokens').get().n,1);
  }finally{db.close();await rm(dir,{recursive:true,force:true});}
 });
-test('Vercel guard prevents build and startup before opening a database',()=>{
- for(const args of [['scripts/build.mjs'],['--input-type=module','-e','import {createServer} from "./server/index.mjs";createServer();']]){
-  const r=spawnSync(process.execPath,args,{cwd:new URL('..',import.meta.url),env:{...process.env,VERCEL:'1'},encoding:'utf8'});assert.notEqual(r.status,0);assert.match(r.stderr,/persistent Node\/Docker host|persistent disk/);
- }
+test('Vercel rewritten API function initializes PostgreSQL and preserves the health response contract',async()=>{
+ let initialized=0,queries=0;
+ const db={kind:'postgres',serial:false,async ensureSchema(){initialized++;},prepare(sql){return {get:async()=>{queries++;assert.equal(sql,'SELECT 1');return {one:1};}};}};
+ const handler=createVercelHandler({storeFactory:()=>db,env:{DATABASE_URL:'postgres://test-only',PUBLIC_ORIGIN:'https://court.test',NODE_ENV:'production'}});
+ const response=await handler.fetch(new Request('https://court.test/api/index?__route=%2Fapi%2Fhealth'));
+ assert.equal(response.status,200);assert.deepEqual(await response.json(),{ok:true,database:'postgres',schema:3});assert.equal(initialized,1);assert.equal(queries,1);
+ const missing=createVercelHandler({storeFactory:()=>{throw Error('must not connect');},env:{PUBLIC_ORIGIN:'https://court.test'}});
+ assert.equal((await missing.fetch(new Request('https://court.test/api/index?__route=%2Fapi%2Fhealth'))).status,503);
+ const invalid=createVercelHandler({storeFactory:()=>db,env:{DATABASE_URL:'test',PUBLIC_ORIGIN:'http://court.test'}});
+ assert.equal((await invalid.fetch(new Request('http://court.test/api/health'))).status,503);
 });

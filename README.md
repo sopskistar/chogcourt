@@ -2,7 +2,7 @@
 
 A court by Chog. A verdict by you.
 
-The existing single-file vanilla frontend now connects to a persistent Node.js/SQLite court. The gallery shows complete illustrations at their natural aspect ratios, and the document scrolls through the courtroom, gallery and guide. The original mosaic, 14.6-second marquee, numerical crops, grain, fonts, entrance choreography and responsive modes remain intact.
+The single-file vanilla frontend connects to the local Node.js/SQLite backend during development and to the asynchronous Neon PostgreSQL backend on Vercel. The gallery shows complete illustrations at their natural aspect ratios, and the document scrolls through the courtroom, gallery and guide. The original mosaic, 14.6-second marquee, numerical crops, grain, fonts, entrance choreography and responsive modes remain intact.
 
 ## Run locally
 
@@ -13,6 +13,10 @@ npm run dev
 ```
 
 Open http://127.0.0.1:4173. The server creates `data/chogcourt.sqlite` and applies the versioned schema. Optional settings are documented in `.env.example`; copy desired settings into an untracked `.env`. Do not put secrets or databases in Git.
+
+## Vercel + Neon deployment
+
+Production uses the `pg` adapter and an empty Neon PostgreSQL schema; local SQLite databases are not copied automatically. Follow the [Vercel + Neon setup and verification guide](docs/VERCEL-NEON.md) for project setup, secrets, schema initialization, deployment and the live case journey.
 
 Restart `npm run dev` after backend changes; it does not watch server modules. Stop an older local process before starting dev on the same port. If `/api/health` reports schema 1 or 2 while this checkout expects 3, back up the database and restart the local backend; refreshing the browser alone cannot load new server routes. See [local troubleshooting](docs/DEPLOYMENT.md#local-feature-troubleshooting).
 
@@ -57,7 +61,7 @@ The demo refuses `NODE_ENV=production` or inherited `DATABASE_PATH`, `PUBLIC_ORI
 - Approved CHOG COURT emblem, “EVERY CHOG GETS A HEARING.” hero, single-row navigation, complete footer and community links.
 - Court Light (default) and Chog Purple themes across the application; explicit theme choices persist when storage is available and work in-memory when it is blocked.
 - Full-artwork galleries and individually enlarged illustrations, scrollable landing-page sections, accessible menu/dialog controls, and all existing local practice examples.
-- Persistent records across separate users, browser sessions and server restarts. Shared data is never sourced from browser localStorage.
+- Persistent records across separate users, browser sessions and serverless requests. Production records are stored in Neon PostgreSQL; local development data remains in SQLite. Shared data is never sourced from browser localStorage.
 
 The default jury policy is explicitly **authenticated court accounts**, not verified NFT holders or one-human-one-vote. Multiple accounts remain a Sybil risk. Wallet identity verification does not change this policy. `JURY_POLICY=nft` still fails closed: NFT-gated voting has not been enabled.
 
