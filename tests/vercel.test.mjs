@@ -6,6 +6,7 @@ import {createVercelHandler} from '../api/index.mjs';
 
 test('Vercel config routes the full API prefix to one function and serves only the static artifact',async()=>{
   const config=JSON.parse(await readFile(new URL('../vercel.json',import.meta.url),'utf8'));
+  assert.equal(config.framework,null);
   assert.equal(config.buildCommand,'npm run build:vercel');assert.equal(config.outputDirectory,'dist');
   assert.equal(config.functions['api/index.mjs'].includeFiles,'server/migrations/postgres-*.sql');
   assert.deepEqual(config.rewrites,[{source:'/api/:path*',destination:'/api/index?__route=/api/:path*'}]);
