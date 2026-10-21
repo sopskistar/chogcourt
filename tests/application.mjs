@@ -65,6 +65,30 @@ try {
   } finally {await plaintiff.js(`document.documentElement.style.overflowY=${JSON.stringify(original)}`);}
  });
  await check('Independent browser sessions register and authenticate separate shared accounts',async()=>{await register(plaintiff,'plaintiff_browser');await register(defendant,'defendant_browser');await register(juror,'juror_browser');assert.ok((await plaintiff.js(`document.querySelector('.live-bar').textContent`)).includes('plaintiff_browser'));assert.ok((await defendant.js(`document.querySelector('.live-bar').textContent`)).includes('defendant_browser'));});
+ await check('Case filing explains the defendant registration prerequisite and waits through a 13-second API response',async()=>{
+  await open(plaintiff,'file-a-case');
+  const form=await plaintiff.js(`document.querySelector('#shared-case-form').textContent`);
+  assert.ok(form.includes('ask them to register from Court account and send you their exact username'));
+  await input(plaintiff,'[name="title"]','Can the clerk keep the purple gavel?');
+  await plaintiff.js(`document.querySelector('[name="category"]').value='Community'`);
+  await input(plaintiff,'[name="defendant"]','defendant_browser');
+  await input(plaintiff,'[name="argument"]','The clerk moved the gavel without recording its location in the docket.');
+  await plaintiff.call('Page.bringToFront');
+  await plaintiff.js(`window.slowCaseFetch=window.fetch;window.slowCaseStarted=false;window.fetch=(url,options)=>{
+   if(new URL(url,location.href).pathname==='/api/claims'&&options?.method==='POST'){window.slowCaseStarted=true;return new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>resolve(new Response(JSON.stringify({error:{code:'TEST_DELAY',message:'Delayed test response received.'}}),{status:503})),13000);
+    options.signal.addEventListener('abort',()=>{clearTimeout(timer);reject(options.signal.reason)},{once:true});
+   });}
+   return window.slowCaseFetch(url,options);
+  };document.querySelector('#shared-case-form').requestSubmit()`);
+  try{
+   await plaintiff.until(`window.slowCaseStarted`,3000);
+   let completed=false;
+   for(let i=0;i<320&&!completed;i++){completed=await plaintiff.js(`document.querySelector('#shared-case-form .api-error')?.textContent.includes('Delayed test response received')`);if(!completed)await wait(50);}
+   assert.equal(completed,true,'the delayed API response should arrive before the 30-second client timeout');
+  }catch(error){throw Error(error.message+' Browser state: '+JSON.stringify(await plaintiff.js(`({started:window.slowCaseStarted,valid:document.querySelector('#shared-case-form')?.checkValidity(),values:document.querySelector('#shared-case-form')?Object.fromEntries(new FormData(document.querySelector('#shared-case-form'))):null,error:document.querySelector('#shared-case-form .api-error')?.textContent})`)));}
+  finally{await plaintiff.js(`window.fetch=window.slowCaseFetch;delete window.slowCaseFetch;delete window.slowCaseStarted`);}
+ });
  await check('New account shows real empty daily, verdict and reputation states without invented activity',async()=>{
   await open(plaintiff,'daily');assert.ok((await plaintiff.js(`document.querySelector('#daily-current').textContent`)).includes('No daily question yet'));
   await open(plaintiff,'verdict');assert.ok((await plaintiff.js(`document.querySelector('#shared-case-list').textContent`)).includes('No finalized cases'));assert.equal(await plaintiff.js(`!!document.querySelector('[data-live-verdict]')`),false);

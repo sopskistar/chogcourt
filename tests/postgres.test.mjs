@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {createPostgresStore} from '../server/postgres.mjs';
+import {createApplication} from '../server/app.mjs';
 
 function fakePool(initialVersion=0) {
   const calls=[];let version=initialVersion;
@@ -53,4 +55,27 @@ test('An older PostgreSQL schema applies only its remaining additive migration',
 test('Fresh schema DDL remains a PostgreSQL-only schema with bytea evidence and foreign keys',async()=>{
   const ddl=(await Promise.all([1,2,3].map(n=>readFile(new URL(`../server/migrations/postgres-00${n}.sql`,import.meta.url),'utf8')))).join('\n');
   assert.match(ddl,/content bytea NOT NULL/);assert.match(ddl,/REFERENCES claims\(id\)/);assert.match(ddl,/GENERATED ALWAYS AS IDENTITY/);assert.doesNotMatch(ddl,/PRAGMA|AUTOINCREMENT|COLLATE NOCASE/);
+});
+
+test('Authenticated PostgreSQL reputation profile lists cases with PostgreSQL-compatible ordering',async()=>{
+  const token='a'.repeat(64),tokenHash=createHash('sha256').update(token).digest('hex'),calls=[];
+  const user={id:'profile-user',username:'profile_user',created_at:'2026-01-01T00:00:00.000Z',active:true,csrf:'csrf-test',token_hash:tokenHash};
+  const db={kind:'postgres',serial:false,prepare(sql){return {
+    async get(...params){calls.push({sql,params});
+      if(sql.includes('FROM sessions s JOIN users u'))return user;
+      if(sql.includes('count(DISTINCT claim_id)'))return {n:0};
+      if(sql.includes('FROM wallet_sessions'))return undefined;
+      return undefined;
+    },
+    async all(...params){calls.push({sql,params});return [];},
+    async run(...params){calls.push({sql,params});return {changes:1};}
+  };}};
+  const app=createApplication({db,origin:'https://court.test',production:true});
+  const response=await app(new Request('https://court.test/api/profile',{headers:{cookie:`chog_session=${token}`}}));
+  assert.equal(response.status,200);
+  const payload=await response.json();
+  assert.deepEqual(payload.cases,[]);assert.deepEqual(payload.dailyHistory,[]);
+  const casesQuery=calls.find(({sql})=>sql.includes('FROM claims c'))?.sql;
+  assert.ok(casesQuery);assert.match(casesQuery,/EXISTS\s*\(/);assert.match(casesQuery,/ORDER BY c\.created_at DESC/);
+  assert.doesNotMatch(casesQuery,/SELECT DISTINCT/);
 });

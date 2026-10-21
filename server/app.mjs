@@ -223,7 +223,12 @@ export function createApplication({db,origin='http://127.0.0.1:4173',production=
       if(path==='/api/profile'&&method==='GET') {
         if(!user)fail(401,'AUTH_REQUIRED','Sign in to view your participation.');
         const votes=await db.prepare('SELECT created_at FROM votes WHERE user_id=?').all(user.id),e=(await db.prepare('SELECT count(DISTINCT claim_id) AS n FROM evidence WHERE author_id=?').get(user.id)).n;
-        const records=await db.prepare('SELECT DISTINCT c.id FROM claims c LEFT JOIN votes v ON v.claim_id=c.id WHERE c.plaintiff_id=? OR c.defendant_id=? OR v.user_id=? ORDER BY c.created_at DESC').all(user.id,user.id,user.id);
+        // Avoid SQLite's permissive DISTINCT/ORDER BY behavior: PostgreSQL
+        // requires ordered columns to be selected when DISTINCT is used.
+        const records=await db.prepare(`SELECT c.id FROM claims c
+          WHERE c.plaintiff_id=? OR c.defendant_id=? OR EXISTS(
+            SELECT 1 FROM votes v WHERE v.claim_id=c.id AND v.user_id=?
+          ) ORDER BY c.created_at DESC`).all(user.id,user.id,user.id);
         const cases=await Promise.all(records.map(async c=>view(await syncClaim(c.id),user)));
         const wallet=await walletAuth.status(user);
         return json({user:publicUser(user),stats:participationStats(votes,e,now()),cases,identity:{verified:!!wallet.tokenKey,tokenKey:wallet.tokenKey,wallet},source:'shared-offchain',dailyHistory:await daily.history(user)});

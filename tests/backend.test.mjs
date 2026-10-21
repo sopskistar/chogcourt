@@ -54,6 +54,8 @@ test('Shared case creation/retrieval, validation, no forged identities or client
  const f=await fixture();try{const c=await f.claim();assert.equal(c.state,'OPEN');assert.equal(c.verdict,null);assert.equal((await f.call('/api/claims/'+c.id,{actor:f.defendant})).data.id,c.id);assert.equal((await f.call('/api/claims')).data.cases.length,1);
  const base={title:'A valid court question?',category:'Community',argument:'This argument is long enough to be submitted.',defendant:'defendant'};
  for(const body of [{...base,title:'bad'},{...base,defendant:'missing'},{...base,defendant:'plaintiff'},{...base,plaintiff_token_key:'forged'},{...base,verdict:'GUILTY'}])assert.equal((await f.call('/api/claims',{method:'POST',actor:f.plaintiff,body})).status,422);
+ const unregistered=await f.call('/api/claims',{method:'POST',actor:f.plaintiff,body:{...base,defendant:'missing'}});
+ assert.equal(unregistered.data.error.code,'DEFENDANT_NOT_FOUND');assert.equal(unregistered.data.error.message,'The defendant must register a court account first.');
  assert.equal((await f.call(`/api/claims/${c.id}/verdict`)).status,409);
  }finally{f.close();}
 });
