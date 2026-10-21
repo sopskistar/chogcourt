@@ -11,7 +11,9 @@ test('Vercel config routes the full API prefix to one function and serves only t
   assert.equal(config.functions['api/index.mjs'].includeFiles,'server/migrations/postgres-*.sql');
   assert.deepEqual(config.rewrites,[{source:'/api/:path*',destination:'/api/index?__route=/api/:path*'}]);
   const root=new URL('../dist/',import.meta.url);
-  await stat(new URL('index.html',root));
+  const deployedHtml=await readFile(new URL('index.html',root),'utf8');
+  assert.match(deployedHtml,/<html lang="en" data-shared-court>/);
+  assert.doesNotMatch(await readFile(new URL('../index.html',import.meta.url),'utf8'),/<html lang="en" data-shared-court>/);
   for(const image of ['chog-court-logo.png','chog-case-of-the-day.png','chog-court-judge.png','chog-official-pfp.png','chog-reputation-card.png','jury-streaks-daily-docket.png','verdict-machine.png'])await stat(new URL(`assets/images/${image}`,root));
   await assert.rejects(stat(new URL('server/app.mjs',root)),{code:'ENOENT'});
   await assert.rejects(stat(new URL('.env.example',root)),{code:'ENOENT'});

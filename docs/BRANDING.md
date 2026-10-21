@@ -2,7 +2,7 @@
 
 The approved identity is CHOG COURT. Tagline: **A court by Chog. A verdict by you.** Hero: **EVERY CHOG GETS A HEARING.** Credit: **Built by @sopskistar**.
 
-The original uploaded emblem is preserved, including its alpha channel, at `assets/images/chog-court-logo.png`. Header/footer sizing uses contain and never filters or recolors the art. The same PNG is the favicon; no unrelated replacement glyph is used. Judge and official PFP remain separate character illustrations. Six gallery images retain their native 1:1 or 3:2 proportions; all six enlarge into independently scrollable, keyboard-accessible dialogs. Printed scores, names and verdicts in the four feature posters are explicitly concept artwork, not application records.
+The original uploaded emblem is preserved, including its alpha channel, at `assets/images/chog-court-logo.png`. Header/footer sizing uses contain and never filters or recolors the art. The same PNG is the favicon; no unrelated replacement glyph is used. Judge and official PFP remain separate character illustrations. Six gallery images retain their native 1:1 or 3:2 proportions; all six enlarge into independently scrollable, keyboard-accessible dialogs. Printed scores, names, token identities, eligibility and verdicts in the four feature illustrations are examples, not application records.
 
 ## Semantic CSS tokens
 

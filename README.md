@@ -112,7 +112,7 @@ No hosting target was configured in the repository or available environment. No 
 
 ## Artwork
 
-All six unmodified PNGs in `assets/images/` came from the repository's main branch at [e0ece21](https://github.com/sopskistar/chogcourt/tree/e0ece210a11acb5c6ef6c4dc31e6deb337310c5c): `verdict-machine.png`, `jury-streaks-daily-docket.png`, `chog-reputation-card.png`, `chog-case-of-the-day.png`, `chog-court-judge.png`, and `chog-official-pfp.png`. Root originals remain preserved. Feature posters are labelled concept artwork, not live data.
+All six unmodified PNGs in `assets/images/` came from the repository's main branch at [e0ece21](https://github.com/sopskistar/chogcourt/tree/e0ece210a11acb5c6ef6c4dc31e6deb337310c5c): `verdict-machine.png`, `jury-streaks-daily-docket.png`, `chog-reputation-card.png`, `chog-case-of-the-day.png`, `chog-court-judge.png`, and `chog-official-pfp.png`. Root originals remain preserved. The four feature illustrations include example values and are not live court records.
 
 The transparent 1254×1254 `Chibi Purple Court Emblem.png` was retrieved from the logo-only main-branch commit [5e84aab](https://github.com/sopskistar/chogcourt/commit/5e84aab) by a safe fast-forward, then copied byte-for-byte to `assets/images/chog-court-logo.png`. That same unmodified PNG is used in the header, footer and favicon. No replacement logo was generated. See [brand tokens and theme behavior](docs/BRANDING.md).
 

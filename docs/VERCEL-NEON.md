@@ -1,10 +1,10 @@
 # Vercel + Neon deployment
 
-This is the deployment path for the async PostgreSQL backend. No Vercel deployment, Neon project/database, production settings, or data migration has been performed. The old SQLite implementation and its data remain local and unchanged.
+This is the deployment and operations path for the async PostgreSQL backend used by the Vercel production target. Check the live `/api/health` endpoint before claiming a deployment is healthy; a successful health check verifies connectivity and schema readiness, not the full case journey. The old SQLite implementation and its local data remain separate and are not automatically migrated.
 
 ## Runtime and persistence
 
-The vanilla frontend is emitted to `dist/` by `npm run build:vercel`; a Vercel rewrite sends `/api/*` to the Node.js Function at `api/index.mjs`, carrying the original route path in an internal query parameter. The function dispatches through the same route handler used by the local Node server. Vercel's `includeFiles` setting explicitly bundles the PostgreSQL migration files used on cold initialization. Artwork remains under `/assets/images/`. Vercel does not run `server/index.mjs` as a listening server.
+The vanilla frontend is emitted to `dist/` by `npm run build:vercel`; that build marks the generated page as the shared court so account registration, sign-in and API-backed case flows are enabled. The source `index.html` stays unmarked for the separate local-practice frontend. A Vercel rewrite sends `/api/*` to the Node.js Function at `api/index.mjs`, carrying the original route path in an internal query parameter. The function dispatches through the same route handler used by the local Node server. Vercel's `includeFiles` setting explicitly bundles the PostgreSQL migration files used on cold initialization. Artwork remains under `/assets/images/`. Vercel does not run `server/index.mjs` as a listening server.
 
 The Vercel handler uses `pg` and `DATABASE_URL`. It does not import or open `node:sqlite`. Every API query is asynchronous and parameterized. Multi-step writes use a PostgreSQL transaction on one checked-out client; case deadline transitions lock the case row, and database unique constraints protect duplicate evidence, responses, readiness and votes across concurrent function instances. Evidence bytes and SHA-256 digests remain private in PostgreSQL `BYTEA`; downloads remain authenticated, attachment-only responses. Nothing is written on-chain.
 
